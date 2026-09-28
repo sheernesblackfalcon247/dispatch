@@ -45,3 +45,4 @@ included in `00`/`01` except where noted.
 | `2026-09-12_external_driver.sql` | Hand one ride to an outside driver, with their car |
 | `2026-09-12_stripe_checkout.sql` | `checkout_drafts` — trips parked while the customer pays on Stripe |
 | `2026-09-15_external_bookings.sql` | Off-platform bookings — **also defines `create_external_booking()`, so run this one** |
+| `2026-09-28_distance_bands_add_up.sql` | "Add up distance bands" switch in Admin → Pricing. Already in `01`/`02` for new instances; **run it on every instance created before 2026-09-28** |

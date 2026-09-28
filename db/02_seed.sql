@@ -92,7 +92,7 @@ where not exists (select 1 from public.pricing_rules existing where existing.nam
 -- ── Settings ─────────────────────────────────────────────────────────────────
 -- Blank where the value belongs to this instance: company name, sender
 -- addresses and alert recipients are set in Admin → Settings once it is live.
--- `company.timezone` and `child_seat_price` are read by the pricing functions,
+-- `company.timezone`, `child_seat_price` and `distance_bands` are read by the pricing functions,
 -- so they must exist from the start.
 insert into public.app_settings (key, value) values
   ('company', jsonb_build_object(
@@ -106,6 +106,8 @@ insert into public.app_settings (key, value) values
       'allow_scheduled', true,
       'min_advance_minutes', 30)),
   ('child_seat_price', jsonb_build_object('amount', 5)),
+  -- true = bands add up (tapered); false = whole trip at the rate of its band.
+  ('distance_bands', jsonb_build_object('add_up', true)),
   -- `booking_alert_emails` is deliberately absent, not an empty list. The code
   -- reads an empty list as "tell nobody" -- a real choice an admin can make --
   -- and only falls back to every active admin and dispatcher when the key is

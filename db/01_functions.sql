@@ -6,7 +6,7 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- ── Pricing ──────────────────────────────────────────────────────────────────
--- total = base fare + tapered distance bands + extra charges.
+-- total = base fare + distance bands + extra charges.
 CREATE OR REPLACE FUNCTION public.estimate_fare(p_category_id uuid, p_distance_km numeric, p_duration_min numeric, p_pickup text DEFAULT ''::text, p_dropoff text DEFAULT ''::text, p_at timestamp with time zone DEFAULT now())
  RETURNS jsonb LANGUAGE plpgsql STABLE SET search_path TO 'public'
 AS $function$
@@ -25,6 +25,8 @@ declare
   v_tz         text;
   v_seg        numeric;
   b            record;
+  v_add_up     boolean;
+  v_rate       numeric;
 begin
   select * into c from vehicle_categories where id = p_category_id;
   if not found then
@@ -33,18 +35,35 @@ begin
 
   v_base := coalesce(c.base_fare,0);
 
-  -- Each band charges just the portion of the trip inside it, income-tax-bracket
-  -- style. A category with no bands charges nothing for distance.
-  for b in
-    select from_km, to_km, price_per_km
-    from pricing_bands where category_id = p_category_id
-    order by from_km asc
-  loop
-    v_seg := least(coalesce(p_distance_km,0), b.to_km) - b.from_km;
-    if v_seg > 0 then
-      v_dist := v_dist + v_seg * coalesce(b.price_per_km,0);
-    end if;
-  end loop;
+  -- Admin → Pricing "Add up distance bands" (app_settings.distance_bands.add_up,
+  -- on when missing).
+  select coalesce((value->>'add_up')::boolean, true) into v_add_up
+    from app_settings where key = 'distance_bands';
+  if v_add_up is null then v_add_up := true; end if;
+
+  if v_add_up then
+    -- Each band charges just the portion of the trip inside it, income-tax-bracket
+    -- style. A category with no bands charges nothing for distance.
+    for b in
+      select from_km, to_km, price_per_km
+      from pricing_bands where category_id = p_category_id
+      order by from_km asc
+    loop
+      v_seg := least(coalesce(p_distance_km,0), b.to_km) - b.from_km;
+      if v_seg > 0 then
+        v_dist := v_dist + v_seg * coalesce(b.price_per_km,0);
+      end if;
+    end loop;
+  else
+    -- The whole trip at the rate of the band it ends in: 15 mi in "10-25 @ 4.5"
+    -- is 15 × 4.5. Past the last band, the last band's rate carries on.
+    select price_per_km into v_rate
+      from pricing_bands
+      where category_id = p_category_id and from_km < coalesce(p_distance_km,0)
+      order by from_km desc
+      limit 1;
+    v_dist := coalesce(p_distance_km,0) * coalesce(v_rate,0);
+  end if;
 
   v_subtotal := v_base + v_dist;
   v_route := lower(coalesce(p_pickup,'') || ' ' || coalesce(p_dropoff,''));

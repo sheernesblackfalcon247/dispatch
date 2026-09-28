@@ -307,8 +307,31 @@ function DistancePricing({ cats }: { cats: VehicleCategory[] }) {
   const [loading, setLoading] = useState(true);
   const [savingCat, setSavingCat] = useState<string | null>(null);
   const [savedCat, setSavedCat] = useState<string | null>(null);
+  // true: each band charges the miles inside it and they add up (tapered).
+  // false: the whole trip is charged at the rate of the band it ends in.
+  const [addUp, setAddUp] = useState(true);
+  const [savingMode, setSavingMode] = useState(false);
+
+  const toggleAddUp = async () => {
+    const next = !addUp;
+    setSavingMode(true);
+    const { error } = await supabase
+      .from("app_settings")
+      .upsert({ key: "distance_bands", value: { add_up: next } });
+    if (!error) {
+      setAddUp(next);
+      await logActivity(
+        supabase,
+        "pricing_updated",
+        next ? "Distance bands now add up (tapered)" : "Distance now charged at one band's rate for the whole trip"
+      );
+    }
+    setSavingMode(false);
+  };
 
   const loadBands = async () => {
+    const { data: mode } = await supabase.from("app_settings").select("value").eq("key", "distance_bands").maybeSingle();
+    setAddUp((mode?.value as { add_up?: boolean } | null)?.add_up !== false);
     const { data } = await supabase.from("pricing_bands").select("*").order("from_km");
     const grouped: Record<string, Band[]> = {};
     ((data as (Band & { category_id: string })[]) ?? []).forEach((b) => {
@@ -398,13 +421,47 @@ function DistancePricing({ cats }: { cats: VehicleCategory[] }) {
         </h2>
       </div>
       <p className="mb-3 max-w-2xl text-xs text-gray-400">
-        This is the only place distance is priced. Each band charges just the miles inside it (like tax
-        brackets), so rates taper as the trip gets longer. Keep bands contiguous (each “From” = previous
-        “To”) starting at 0, and make the last “To” large (e.g. 1000). Airport / night charges and the
-        child seat are added on top.
+        This is the only place distance is priced. Keep bands contiguous (each “From” = previous “To”)
+        starting at 0, and make the last “To” large (e.g. 1000). Airport / night charges and the child
+        seat are added on top.
       </p>
 
-      <FareCalculator cats={cats} />
+      <label
+        className={cn(
+          "mb-4 flex max-w-2xl cursor-pointer items-start gap-3 rounded-2xl border border-gray-100 bg-white p-4 shadow-sm",
+          (loading || savingMode) && "pointer-events-none opacity-60"
+        )}
+      >
+        <input
+          type="checkbox"
+          checked={addUp}
+          onChange={toggleAddUp}
+          disabled={loading || savingMode}
+          className="mt-0.5 h-4 w-4 shrink-0 accent-emerald-600"
+        />
+        <span>
+          <span className="flex items-center gap-2 text-sm font-semibold text-ink-950">
+            Add up distance bands
+            {savingMode && <Loader2 className="h-3.5 w-3.5 animate-spin text-emerald-600" />}
+          </span>
+          <span className="mt-1 block text-xs leading-relaxed text-gray-500">
+            {addUp ? (
+              <>
+                <b className="font-semibold text-gray-700">On:</b> each band charges just the miles inside it, and
+                they are added together. With 0–10 @ £5 and 10–25 @ £4.50, a 15 mi trip is (10 × £5) + (5 × £4.50).
+              </>
+            ) : (
+              <>
+                <b className="font-semibold text-gray-700">Off:</b> the whole trip is charged at the rate of the band
+                it ends in. With 0–10 @ £5 and 10–25 @ £4.50, a 15 mi trip is 15 × £4.50. A trip just past a
+                band’s end can cost less than one just before it — check the prices around each boundary.
+              </>
+            )}
+          </span>
+        </span>
+      </label>
+
+      <FareCalculator key={String(addUp)} cats={cats} />
 
       {loading ? (
         <div className="flex h-24 items-center justify-center">
