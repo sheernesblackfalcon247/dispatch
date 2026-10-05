@@ -119,7 +119,7 @@ function button(url: string, label: string): string {
 
 /** Customer-facing "Booking confirmed" email with a Track button. */
 export function customerConfirmationEmail(d: BookingEmailData): { subject: string; html: string } {
-  const site = d.siteName || "TaxiFlow";
+  const site = d.siteName || "Black Falcon 247 Taxi";
   const html = shell({
     preheader: `Your booking ${d.bookingNumber} is confirmed.`,
     heading: "Booking confirmed 🎉",

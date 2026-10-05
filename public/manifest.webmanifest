@@ -1,7 +1,7 @@
 {
-  "name": "TaxiFlow — Booking & Dispatch",
-  "short_name": "TaxiFlow",
-  "description": "Multi-website taxi booking and dispatch system",
+  "name": "Black Falcon 247 Taxi",
+  "short_name": "Black Falcon",
+  "description": "Book and track your Black Falcon 247 Taxi, 24/7.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0b0b0f",

@@ -106,14 +106,14 @@ export default function InstallPage() {
             <div className="absolute inset-0 rounded-[22px] bg-brand-500/25 blur-2xl" />
             <Image
               src="/icon.svg"
-              alt="TaxiFlow"
+              alt="Black Falcon 247 Taxi"
               width={80}
               height={80}
               priority
               className="relative h-20 w-20 rounded-[22px] shadow-xl shadow-brand-500/30"
             />
           </div>
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-600">TaxiFlow</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-600">Black Falcon 247 Taxi</p>
           <h1 className="mt-1 font-display text-2xl font-extrabold tracking-tight text-ink-950 sm:text-3xl">
             Get the app
           </h1>
@@ -157,7 +157,7 @@ export default function InstallPage() {
                   <CheckCircle2 className="h-8 w-8" />
                 </div>
                 <p className="font-display text-lg font-bold text-ink-950">App installed</p>
-                <p className="mt-1 text-sm text-gray-500">You&apos;re all set. Find TaxiFlow with your other apps.</p>
+                <p className="mt-1 text-sm text-gray-500">You&apos;re all set. Find Black Falcon with your other apps.</p>
                 <Link
                   href="/"
                   className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-brand-500 py-3.5 font-bold text-ink-950 shadow-lg shadow-brand-500/30 transition-colors hover:bg-brand-400"
@@ -181,7 +181,7 @@ function ManualSteps({ platform }: { platform: Platform }) {
       ? [
           { icon: Share, text: <>Tap the <b>Share</b> button at the bottom of Safari.</> },
           { icon: PlusSquare, text: <>Scroll down and tap <b>Add to Home Screen</b>.</> },
-          { icon: CheckCircle2, text: <>Tap <b>Add</b>. TaxiFlow now lives on your home screen.</> },
+          { icon: CheckCircle2, text: <>Tap <b>Add</b>. Black Falcon now lives on your home screen.</> },
         ]
       : platform === "android"
         ? [

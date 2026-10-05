@@ -8,7 +8,7 @@
  */
 import { getConfigValue } from "./settings";
 
-const DEFAULT_FROM = "TaxiFlow <onboarding@resend.dev>";
+const DEFAULT_FROM = "Black Falcon 247 Taxi <onboarding@resend.dev>";
 
 export async function emailEnabled(): Promise<boolean> {
   return Boolean(process.env.RESEND_API_KEY);

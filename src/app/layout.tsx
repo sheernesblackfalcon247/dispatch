@@ -17,8 +17,8 @@ const jakarta = Plus_Jakarta_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "TaxiFlow — Booking & Dispatch",
-  description: "Multi-website taxi booking and dispatch system",
+  title: "Black Falcon 247 Taxi — Book a Taxi 24/7",
+  description: "Book a Black Falcon 247 Taxi online — 24/7 taxis and airport transfers.",
   manifest: "/manifest.webmanifest",
   icons: {
     icon: [

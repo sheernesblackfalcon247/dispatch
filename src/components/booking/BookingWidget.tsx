@@ -1001,7 +1001,7 @@ export default function BookingWidget({
         </div>
 
         {!manual && (
-          <p className="mt-4 text-center text-xs text-gray-400">Secured booking · Powered by TaxiFlow</p>
+          <p className="mt-4 text-center text-xs text-gray-400">Secured booking · Black Falcon 247 Taxi</p>
         )}
       </div>
     </main>
