@@ -96,7 +96,7 @@ where not exists (select 1 from public.pricing_rules existing where existing.nam
 -- so they must exist from the start.
 insert into public.app_settings (key, value) values
   ('company', jsonb_build_object(
-      'name', 'Taxi Co',
+      'name', 'Black Falcon 247 Taxi Ltd',
       'currency', 'GBP',
       'currency_symbol', '£',
       'timezone', 'Europe/London',
