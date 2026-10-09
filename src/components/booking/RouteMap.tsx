@@ -4,6 +4,7 @@
 import { useEffect, useRef } from "react";
 import { MapPin, Navigation, Loader2 } from "lucide-react";
 import { useGoogleMaps } from "@/lib/useGoogleMaps";
+import { fetchRoutePath } from "@/lib/polyline";
 import type { PlaceValue } from "@/components/booking/AddressAutocomplete";
 
 declare global {
@@ -42,6 +43,7 @@ export default function RouteMap({ outbound, returnLeg }: Props) {
     if (!isLoaded || !mapEl.current || !window.google?.maps?.Map) return;
     const g = window.google.maps;
     const timers: ReturnType<typeof setTimeout>[] = [];
+    let stale = false;
 
     try {
       if (!mapRef.current) {
@@ -133,21 +135,16 @@ export default function RouteMap({ outbound, returnLeg }: Props) {
         }
       };
 
-      const drawLeg = (leg: RouteLeg, color: string, dashed: boolean) => {
-        new g.DirectionsService().route(
-          {
-            origin: { lat: leg.pickup.lat, lng: leg.pickup.lng },
-            destination: { lat: leg.dropoff.lat, lng: leg.dropoff.lng },
-            waypoints: leg.vias
-              .filter(hasCoords)
-              .map((v) => ({ location: { lat: v.lat, lng: v.lng }, stopover: true })),
-            travelMode: g.TravelMode.DRIVING,
-          },
-          (result: any, status: string) => {
-            const path = result?.routes?.[0]?.overview_path;
-            if (status === "OK" && path) drawPath(path, color, dashed);
-          }
+      // The route comes from our own server (Google Routes API) — the browser
+      // Directions service is a legacy API that new Google projects can't use.
+      const drawLeg = async (leg: RouteLeg, color: string, dashed: boolean) => {
+        const path = await fetchRoutePath(
+          { lat: leg.pickup.lat!, lng: leg.pickup.lng! },
+          { lat: leg.dropoff.lat!, lng: leg.dropoff.lng! },
+          leg.vias.filter(hasCoords).map((v) => ({ lat: v.lat!, lng: v.lng! }))
         );
+        // The trip changed while we were waiting — a newer run draws instead.
+        if (path && !stale) drawPath(path, color, dashed);
       };
 
       drawLeg(outbound, OUTBOUND_COLOR, false);
@@ -161,7 +158,10 @@ export default function RouteMap({ outbound, returnLeg }: Props) {
       console.error("Route map render failed:", e);
     }
 
-    return () => timers.forEach(clearTimeout);
+    return () => {
+      stale = true;
+      timers.forEach(clearTimeout);
+    };
   }, [isLoaded, outbound, returnLeg, showReturn]);
 
   // Fallback when no key / load failed

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { googleRouteDistance, type Pt } from "@/lib/googleRoute";
 import { rateLimit, clientIp } from "@/lib/rateLimit";
 
-/** Driving distance + duration through optional via waypoints, via Google Directions REST. */
+/** Driving distance + duration (and the route line) through optional via waypoints, via the Google Routes API. */
 export async function POST(req: Request) {
   if (!rateLimit(`route:${clientIp(req)}`, 40, 60_000)) {
     return NextResponse.json({ ok: false, error: "rate_limited" }, { status: 429 });
@@ -16,5 +16,5 @@ export async function POST(req: Request) {
 
   const r = await googleRouteDistance(o, d, waypoints);
   if (!r) return NextResponse.json({ ok: false });
-  return NextResponse.json({ ok: true, km: r.km, min: r.min });
+  return NextResponse.json({ ok: true, km: r.km, min: r.min, polyline: r.polyline });
 }

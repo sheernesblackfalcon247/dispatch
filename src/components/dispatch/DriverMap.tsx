@@ -4,6 +4,7 @@
 import { useEffect, useRef } from "react";
 import { MapPin, Navigation } from "lucide-react";
 import { useGoogleMaps } from "@/lib/useGoogleMaps";
+import { fetchRoutePath } from "@/lib/polyline";
 import type { Booking } from "@/lib/types";
 
 declare global {
@@ -81,27 +82,25 @@ export default function DriverMap({ selectedJob }: Props) {
         addMarker(selectedJob.dropoff_lat!, selectedJob.dropoff_lng!, "#0b0b0f", "Drop-off", "B");
 
       // Draw the actual driving route through any via points
-      if (hasPickup && hasDropoff && window.google.maps.DirectionsService) {
-        const svc = new window.google.maps.DirectionsService();
-        svc.route(
-          {
-            origin: { lat: selectedJob.pickup_lat, lng: selectedJob.pickup_lng },
-            destination: { lat: selectedJob.dropoff_lat, lng: selectedJob.dropoff_lng },
-            waypoints: vias.map((v: any) => ({ location: { lat: v.lat, lng: v.lng }, stopover: true })),
-            travelMode: window.google.maps.TravelMode.DRIVING,
-          },
-          (res: any, status: string) => {
-            // Ignore if the selection changed while this was in flight
-            if (reqId !== reqRef.current || status !== "OK" || !res || !mapRef.current) return;
-            if (routeRef.current) routeRef.current.setMap(null);
-            routeRef.current = new window.google.maps.DirectionsRenderer({
-              map: mapRef.current,
-              directions: res,
-              suppressMarkers: true,
-              polylineOptions: { strokeColor: "#f5b301", strokeWeight: 5, strokeOpacity: 0.9 },
-            });
-          }
-        );
+      // (from our server's Routes API call — the browser Directions service is
+      // a legacy API that new Google projects can't use)
+      if (hasPickup && hasDropoff) {
+        fetchRoutePath(
+          { lat: selectedJob.pickup_lat!, lng: selectedJob.pickup_lng! },
+          { lat: selectedJob.dropoff_lat!, lng: selectedJob.dropoff_lng! },
+          vias.map((v: any) => ({ lat: v.lat, lng: v.lng }))
+        ).then((path) => {
+          // Ignore if the selection changed while this was in flight
+          if (reqId !== reqRef.current || !path || !mapRef.current) return;
+          if (routeRef.current) routeRef.current.setMap(null);
+          routeRef.current = new window.google.maps.Polyline({
+            map: mapRef.current,
+            path,
+            strokeColor: "#f5b301",
+            strokeWeight: 5,
+            strokeOpacity: 0.9,
+          });
+        });
       }
 
       if (markersRef.current.length === 1) {

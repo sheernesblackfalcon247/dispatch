@@ -1,5 +1,5 @@
 /**
- * The Google Maps key used for SERVER-side calls — Places and Directions.
+ * The Google Maps key used for SERVER-side calls — Places API (New) and Routes API.
  *
  * Deliberately separate from NEXT_PUBLIC_GOOGLE_MAPS_API_KEY, because the two
  * halves can only be locked down in opposite ways. The browser key is inlined

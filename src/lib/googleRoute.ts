@@ -1,5 +1,5 @@
 /**
- * Server-side Google Directions helper.
+ * Server-side Google Routes API helper.
  *
  * Used both by the /api/route endpoint (for the widget's live distance chip)
  * and by the quote/book/payment routes to RE-DERIVE trip distance from
@@ -35,26 +35,50 @@ export async function googleRouteDistance(
   origin: Pt,
   destination: Pt,
   waypoints: Pt[] = []
-): Promise<{ km: number; min: number } | null> {
+): Promise<{ km: number; min: number; polyline: string | null } | null> {
   const key = serverMapsKey();
   if (!key || !hasCoord(origin) || !hasCoord(destination)) return null;
 
-  const vias = waypoints.filter(hasCoord);
-  let url = `https://maps.googleapis.com/maps/api/directions/json?origin=${origin.lat},${origin.lng}&destination=${destination.lat},${destination.lng}`;
-  if (vias.length) {
-    url += `&waypoints=` + vias.map((w) => `${w.lat},${w.lng}`).join("|");
-  }
-  url += `&key=${key}`;
+  const at = (p: { lat: number; lng: number }) => ({
+    location: { latLng: { latitude: p.lat, longitude: p.lng } },
+  });
 
   try {
-    const res = await fetch(url, { cache: "no-store" });
+    const res = await fetch("https://routes.googleapis.com/directions/v2:computeRoutes", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": key,
+        "X-Goog-FieldMask": "routes.distanceMeters,routes.duration,routes.polyline.encodedPolyline",
+      },
+      body: JSON.stringify({
+        origin: at(origin),
+        destination: at(destination),
+        intermediates: waypoints.filter(hasCoord).map(at),
+        travelMode: "DRIVE",
+        // Same answer the old Directions API gave by default: the route and
+        // distance don't move with live traffic, so neither does the fare.
+        routingPreference: "TRAFFIC_UNAWARE",
+        units: "IMPERIAL",
+      }),
+      cache: "no-store",
+    });
     const data = await res.json();
-    type Leg = { distance?: { value: number }; duration?: { value: number } };
-    const legs: Leg[] = data.routes?.[0]?.legs ?? [];
-    if (!legs.length) return null;
-    const meters = legs.reduce((s, l) => s + (l.distance?.value ?? 0), 0);
-    const secs = legs.reduce((s, l) => s + (l.duration?.value ?? 0), 0);
-    return { km: Number((meters / 1609.344).toFixed(2)), min: Math.round(secs / 60) };
+    if (!res.ok) {
+      console.error("[route] Google Routes API failed", res.status, data?.error?.message);
+      return null;
+    }
+    const route = data.routes?.[0] as
+      | { distanceMeters?: number; duration?: string; polyline?: { encodedPolyline?: string } }
+      | undefined;
+    if (!route?.distanceMeters) return null;
+    // Duration comes back as a string of seconds, e.g. "1834s".
+    const secs = parseFloat(route.duration ?? "0") || 0;
+    return {
+      km: Number((route.distanceMeters / 1609.344).toFixed(2)),
+      min: Math.round(secs / 60),
+      polyline: route.polyline?.encodedPolyline ?? null,
+    };
   } catch {
     return null;
   }
