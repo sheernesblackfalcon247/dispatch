@@ -1,4 +1,4 @@
-import type { BookingStatus } from "./types";
+import type { BookingStatus, JobStatus } from "./types";
 
 export const CURRENCY_SYMBOL = "£";
 
@@ -19,3 +19,12 @@ export const STATUS_META: Record<
 };
 
 export const DRIVER_ACCEPT_TIMEOUT = 15; // seconds
+
+/** Job statuses in the order staff pick from, with their badge colours. */
+export const JOB_STATUS_META: Record<JobStatus, { label: string; color: string; bg: string; dot: string }> = {
+  processing: { label: "Processing", color: "text-blue-700", bg: "bg-blue-50", dot: "bg-blue-500" },
+  on_hold: { label: "On hold", color: "text-amber-700", bg: "bg-amber-50", dot: "bg-amber-500" },
+  completed: { label: "Completed", color: "text-green-700", bg: "bg-green-50", dot: "bg-green-500" },
+  cancelled: { label: "Cancelled", color: "text-red-700", bg: "bg-red-50", dot: "bg-red-500" },
+  refunded: { label: "Refunded", color: "text-gray-700", bg: "bg-gray-100", dot: "bg-gray-500" },
+};

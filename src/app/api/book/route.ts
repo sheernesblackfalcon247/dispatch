@@ -15,9 +15,9 @@ import {
  * Create a booking that is NOT paid by card up front — cash rides, and staff
  * bookings taken over the phone.
  *
- * Card bookings do not come through here any more. They go to Stripe Checkout
+ * Card bookings do not come through here any more. They go to SumUp Checkout
  * (/api/payment/checkout) and the booking is written on the way back, once
- * Stripe confirms the money — see src/lib/checkoutRedeem.ts.
+ * SumUp confirms the money — see src/lib/checkoutRedeem.ts.
  */
 export async function POST(req: Request) {
   // Throttle: booking sends an SMS + emails to client-supplied addresses and hits

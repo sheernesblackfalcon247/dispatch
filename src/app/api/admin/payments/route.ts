@@ -31,7 +31,7 @@ export async function GET(req: Request) {
   let q = admin
     .from("payments")
     .select(
-      "id, amount, amount_refunded, currency, method, status, needs_review, review_reason, failure_reason, disputed_at, receipt_url, stripe_payment_intent_id, booking_id, created_at, refunded_at, bookings(booking_number, customer_name, customer_email, status, scheduled_at)"
+      "id, amount, amount_refunded, currency, method, status, needs_review, review_reason, failure_reason, disputed_at, receipt_url, sumup_transaction_id, booking_id, created_at, refunded_at, bookings(booking_number, customer_name, customer_email, status, scheduled_at)"
     )
     .order("created_at", { ascending: false })
     .limit(limit);

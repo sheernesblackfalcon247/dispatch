@@ -69,14 +69,14 @@ const emptyJourney: Journey = { pickup: empty, vias: [], dropoff: empty, km: nul
 const emailValid = (e: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e.trim());
 
 /**
- * Leave for Stripe's hosted checkout.
+ * Leave for SumUp's hosted checkout.
  *
  * The widget is often running inside an iframe on a partner's website, and
- * Stripe (rightly) refuses to render inside one — so the whole browser goes,
+ * a hosted payment page (rightly) refuses to render inside one — so the whole browser goes,
  * not just the frame. If the frame isn't allowed to navigate its parent we fall
  * back to a new tab rather than stranding the customer on a dead button.
  */
-const goToStripe = (url: string) => {
+const goToCheckout = (url: string) => {
   try {
     const top = window.top;
     if (top && top !== window.self) {
@@ -208,18 +208,18 @@ export default function BookingWidget({
     fare: number;
   } | null>(null);
 
-  // Card payment: we hand off to Stripe's own hosted page rather than taking
+  // Card payment: we hand off to SumUp's own hosted page rather than taking
   // card details here, so all this tracks is "we are about to leave the site".
   const [leaving, setLeaving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   // Category to re-select once quotes come back, when resuming a cancelled checkout.
   const [pendingCategory, setPendingCategory] = useState<string | null>(null);
 
-  // Coming back from a cancelled Stripe checkout: refill everything the customer
+  // Coming back from a cancelled SumUp checkout: refill everything the customer
   // already typed. Nobody should have to enter two addresses and a phone number
   // twice because they had second thoughts on the payment page.
   useEffect(() => {
-    // Stripe's "Back" link carries ?resume=; the browser back button carries
+    // An explicit ?resume=<draft id> link wins; the browser back button carries
     // nothing, so fall back to what this tab remembered on its way out.
     const explicit = new URLSearchParams(window.location.search).get("resume");
     const draftId = explicit ?? rememberedCheckout();
@@ -231,7 +231,7 @@ export default function BookingWidget({
 
         if (!data?.ok) {
           forgetCheckout();
-          // They actually did pay. Following Stripe's own back link means they
+          // They actually did pay. Following an explicit resume link means they
           // want that ride; arriving here by browser history (or "Book another
           // ride") does not — leave those with a clean form.
           if (data?.error === "already_booked" && data.booking_number && explicit) {
@@ -347,7 +347,7 @@ export default function BookingWidget({
 
   // Card is closed to the public until it is explicitly switched on. Staff
   // taking a phone booking keep it, because they collect that payment
-  // themselves — it never goes near Stripe.
+  // themselves — it never goes near SumUp.
   const cardOffered = manual || cardPaymentsEnabled();
   useEffect(() => {
     if (!cardOffered && payment === "card") setPayment("cash");
@@ -429,10 +429,10 @@ export default function BookingWidget({
   });
 
   /**
-   * Card: hand off to Stripe Checkout.
+   * Card: hand off to SumUp Checkout.
    *
    * No booking is created yet — the trip is parked server-side and only becomes
-   * a booking once Stripe confirms the payment, so an abandoned checkout leaves
+   * a booking once SumUp confirms the payment, so an abandoned checkout leaves
    * nothing behind. The customer comes back to /booking/complete.
    */
   const startCardPayment = async () => {
@@ -456,7 +456,7 @@ export default function BookingWidget({
         return;
       }
       if (data.draft_id) rememberCheckout(data.draft_id);
-      goToStripe(data.url);
+      goToCheckout(data.url);
     } catch {
       setLeaving(false);
       setError("Could not start the payment. Please try again or choose Cash.");
@@ -992,7 +992,7 @@ export default function BookingWidget({
                 {payment === "card" && !manual && (
                   <p className="flex items-center justify-center gap-1.5 text-center text-[11px] text-gray-400">
                     <Lock className="h-3 w-3" />
-                    You&apos;ll pay securely on Stripe, then come straight back
+                    You&apos;ll pay securely on SumUp, then come straight back
                   </p>
                 )}
               </motion.div>

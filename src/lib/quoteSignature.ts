@@ -3,10 +3,9 @@ import { createHash } from "crypto";
 /**
  * Canonical fingerprint of a priced trip.
  *
- * /api/payment/checkout stamps this onto the Stripe Checkout session and its
- * PaymentIntent, and uses it to recognise a repeat "Pay" press for the same
- * trip so the customer lands back on the SAME checkout instead of opening a
- * second one.
+ * /api/payment/checkout stores this on the checkout draft, and uses it to
+ * recognise a repeat "Pay" press for the same trip so the customer lands back
+ * on the SAME checkout instead of opening a second one.
  *
  * Every input that moves the price is in the hash, so two trips that should
  * cost differently can never share a fingerprint.

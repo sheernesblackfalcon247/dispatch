@@ -12,7 +12,7 @@ import { staffAlertRecipients } from "@/lib/notifyStaff";
  * The one place a booking is written and announced.
  *
  * Two routes need this and they must never drift: /api/book for cash, and
- * /api/payment/complete for card (where the booking is only created once Stripe
+ * /api/payment/complete for card (where the booking is only created once SumUp
  * confirms the money). Keeping the RPC call, the fare rules and the
  * email/SMS/log side effects here means a change lands in both at once.
  */
@@ -52,7 +52,7 @@ export interface LegResult {
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-/** Everything a booking needs before we spend money on Google/Stripe calls. */
+/** Everything a booking needs before we spend money on Google/SumUp calls. */
 export function validateBookingInput(b: Partial<BookingInput>): string | null {
   if (!b?.name?.trim() || !b?.whatsapp?.trim() || !b?.category_id || !b?.outbound) return "missing_fields";
   if (!b.email?.trim() || !EMAIL_RE.test(b.email.trim())) return "invalid_email";

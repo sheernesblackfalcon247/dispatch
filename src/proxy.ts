@@ -14,7 +14,7 @@ export async function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // api/webhooks and api/cron are excluded on purpose: Stripe and the Vercel
+    // api/webhooks and api/cron are excluded on purpose: SumUp and the Vercel
     // cron authenticate with a signature or secret, not a session cookie, and the
     // session refresh here would only add latency and Set-Cookie noise to a
     // machine-to-machine call.

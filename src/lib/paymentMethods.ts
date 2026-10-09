@@ -2,7 +2,7 @@
  * Is "pay by card" open to customers right now?
  *
  * Card payments are deliberately OFF unless someone turns them on. While the
- * site runs on Stripe test keys a customer can complete a checkout and be told
+ * site runs on SumUp sandbox keys a customer can complete a checkout and be told
  * "Paid by card" without a penny leaving their account — the booking looks
  * settled, a driver goes out, and the fare is never collected. Off-by-default
  * means that can only happen on purpose.

@@ -1,16 +1,15 @@
-import type Stripe from "stripe";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getWebsiteKey } from "@/lib/getWebsiteKey";
-import { fromMinor } from "@/lib/stripe";
+import { paidTransaction, round2, type SumUp, type SumUpCheckout } from "@/lib/sumup";
 import { splitFare } from "@/lib/fare";
 import { createTrip, notifyBooking, validateBookingInput, type BookingInput } from "@/lib/bookingFlow";
 
 /**
- * Turn a paid Stripe Checkout Session into a booking — exactly once.
+ * Turn a paid SumUp checkout into a booking — exactly once.
  *
  * Two things race to call this: the customer landing back on /booking/complete,
- * and the `checkout.session.completed` webhook. Whichever arrives first does the
- * work; the other reads the result. The draft row is the lock, so a customer on
+ * and the SumUp webhook. Whichever arrives first does the work; the other reads
+ * the result. The draft row is the lock, so a customer on
  * a slow phone can never end up with two bookings for one payment.
  */
 
@@ -39,18 +38,24 @@ interface DraftRow {
   booking_number: string | null;
 }
 
-export async function redeemCheckoutSession(
-  stripe: Stripe,
-  sessionId: string,
+/**
+ * Look the draft up by our own id (the return page) or by SumUp's checkout id
+ * (the webhook), then redeem it.
+ */
+export async function redeemCheckout(
+  sumup: SumUp,
+  ref: { draftId: string } | { checkoutId: string },
   origin: string
 ): Promise<RedeemResult> {
   const admin = createAdminClient();
 
-  const { data: draft } = await admin
+  const query = admin
     .from("checkout_drafts")
-    .select("id, session_id, payload, amount, website_slug, status, booking_id, booking_number")
-    .eq("session_id", sessionId)
-    .maybeSingle();
+    .select("id, session_id, payload, amount, website_slug, status, booking_id, booking_number");
+  const { data: draft } = await ("draftId" in ref
+    ? query.eq("id", ref.draftId)
+    : query.eq("session_id", ref.checkoutId)
+  ).maybeSingle();
 
   if (!draft) return { ok: false, error: "unknown_session" };
   const d = draft as DraftRow;
@@ -60,32 +65,30 @@ export async function redeemCheckoutSession(
     return await describeExisting(admin, d);
   }
 
-  // Has the money actually arrived? Stripe is the only authority on that.
-  let session: Stripe.Checkout.Session;
+  // Has the money actually arrived? SumUp is the only authority on that.
+  let checkout: SumUpCheckout;
   try {
-    session = await stripe.checkout.sessions.retrieve(sessionId, {
-      expand: ["payment_intent", "payment_intent.latest_charge"],
-    });
+    checkout = await sumup.getCheckout(d.session_id);
   } catch (err) {
-    console.error("[checkout] could not retrieve session", sessionId, err);
-    return { ok: false, error: "stripe_unreachable" };
+    console.error("[checkout] could not retrieve SumUp checkout", d.session_id, err);
+    return { ok: false, error: "provider_unreachable" };
   }
 
-  if (session.payment_status !== "paid") {
-    return { ok: false, error: "not_paid" };
-  }
+  // Card processing (3-D Secure especially) can still be settling when the
+  // customer is redirected back. Let the return page keep asking.
+  if (checkout.status === "PENDING") return { ok: true, pending: true };
+  if (checkout.status !== "PAID") return { ok: false, error: "not_paid" };
 
-  const pi = session.payment_intent as Stripe.PaymentIntent | null;
-  const charge = pi && typeof pi === "object" ? (pi.latest_charge as Stripe.Charge | null) : null;
-  const receiptUrl = charge && typeof charge === "object" ? charge.receipt_url ?? null : null;
-  const amountPaid = fromMinor(session.amount_total ?? 0);
-  const intentId = typeof pi === "object" && pi ? pi.id : typeof session.payment_intent === "string" ? session.payment_intent : null;
+  const txn = paidTransaction(checkout);
+  const receiptUrl: string | null = null; // SumUp emails its own receipt to the payer
+  const amountPaid = round2(Number(txn?.amount ?? checkout.amount ?? d.amount));
+  const transactionId = txn?.id ?? null;
 
   // ── Claim the draft ───────────────────────────────────────────────────────
   // A conditional UPDATE is the lock: only one caller can move it off "open".
   const { data: claimed } = await admin
     .from("checkout_drafts")
-    .update({ status: "completing", payment_intent_id: intentId })
+    .update({ status: "completing", transaction_id: transactionId })
     .eq("id", d.id)
     .eq("status", "open")
     .select("id")
@@ -126,7 +129,7 @@ export async function redeemCheckoutSession(
     // Money is in but the booking would not save. Put it back to open so a
     // retry (or the webhook) can try again, and make sure a human sees it.
     await failDraft(admin, d.id, created.error.error ?? "create_booking failed");
-    await flagOrphanPayment(admin, intentId, amountPaid, receiptUrl);
+    await flagOrphanPayment(admin, transactionId, amountPaid, receiptUrl);
     return { ok: false, error: created.error.error ?? "booking_failed" };
   }
 
@@ -134,7 +137,7 @@ export async function redeemCheckoutSession(
   const returnId = created.return?.ok ? created.return.booking_id ?? null : null;
 
   // Mark paid on every leg of the trip.
-  const paidFields = { payment_status: "paid", stripe_payment_intent_id: intentId };
+  const paidFields = { payment_status: "paid", sumup_transaction_id: transactionId };
   if (created.tripGroupId) {
     await admin.from("bookings").update(paidFields).eq("trip_group_id", created.tripGroupId);
   } else if (outboundId) {
@@ -154,14 +157,14 @@ export async function redeemCheckoutSession(
     }
   }
 
-  if (intentId) {
+  if (transactionId) {
     const { error: payErr } = await admin.from("payments").insert({
       booking_id: outboundId,
       amount: amountPaid,
       method: "card",
       status: "paid",
-      currency: session.currency ?? "gbp",
-      stripe_payment_intent_id: intentId,
+      currency: "gbp",
+      sumup_transaction_id: transactionId,
       receipt_url: receiptUrl,
     });
     // 23505 = the webhook already wrote it. Attach the booking and move on.
@@ -169,7 +172,7 @@ export async function redeemCheckoutSession(
       await admin
         .from("payments")
         .update({ booking_id: outboundId, receipt_url: receiptUrl, needs_review: false, review_reason: null })
-        .eq("stripe_payment_intent_id", intentId);
+        .eq("sumup_transaction_id", transactionId);
     } else if (payErr) {
       console.error("[checkout] could not write payment row", payErr);
     }
@@ -208,7 +211,7 @@ export async function redeemCheckoutSession(
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Report a draft that was already redeemed, without touching Stripe again. */
+/** Report a draft that was already redeemed, without touching SumUp again. */
 async function describeExisting(admin: Admin, d: DraftRow): Promise<RedeemResult> {
   const { data: booking } = await admin
     .from("bookings")
@@ -256,19 +259,19 @@ async function failDraft(admin: Admin, id: string, reason: string) {
  */
 async function flagOrphanPayment(
   admin: Admin,
-  intentId: string | null,
+  transactionId: string | null,
   amount: number,
   receiptUrl: string | null
 ) {
-  if (!intentId) return;
+  if (!transactionId) return;
   const reason =
-    "The customer paid on Stripe Checkout but the booking could not be saved. Refund them or create the booking by hand.";
+    "The customer paid on SumUp but the booking could not be saved. Refund them or create the booking by hand.";
   const { error } = await admin.from("payments").insert({
     booking_id: null,
     amount,
     method: "card",
     status: "paid",
-    stripe_payment_intent_id: intentId,
+    sumup_transaction_id: transactionId,
     receipt_url: receiptUrl,
     needs_review: true,
     review_reason: reason,
@@ -276,8 +279,8 @@ async function flagOrphanPayment(
   if (error && error.code !== "23505") console.error("[checkout] could not flag orphan payment", error);
   await admin.from("activity_logs").insert({
     action: "payment_unmatched",
-    description: `Checkout payment of ${amount.toFixed(2)} could not be turned into a booking (${intentId})`,
-    metadata: { payment_intent: intentId, amount },
+    description: `Checkout payment of ${amount.toFixed(2)} could not be turned into a booking (${transactionId})`,
+    metadata: { transaction: transactionId, amount },
   });
 }
 
@@ -290,7 +293,7 @@ async function setLegFare(admin: Admin, bookingId: string, fare: number, tripTot
         total: fare,
         charged: true,
         trip_total: tripTotal,
-        note: "Set to the amount actually charged on Stripe Checkout",
+        note: "Set to the amount actually charged on SumUp",
       },
     })
     .eq("id", bookingId);

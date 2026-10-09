@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
-import { getStripe, toMinor } from "@/lib/stripe";
+import { getSumUp, round2 } from "@/lib/sumup";
 import { getWebsiteKey } from "@/lib/getWebsiteKey";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { priceTrip } from "@/lib/pricing";
@@ -11,16 +11,16 @@ import { cardPaymentsEnabled } from "@/lib/paymentMethods";
 import { draftCookieValue } from "@/lib/draftCookie";
 
 /**
- * Start a Stripe Checkout payment.
+ * Start a SumUp Hosted Checkout payment.
  *
  * The booking is deliberately NOT created here. The trip is priced server-side,
- * parked in `checkout_drafts`, and the customer is sent to Stripe's own hosted
- * page. Only once Stripe confirms the money does the draft become a booking —
+ * parked in `checkout_drafts`, and the customer is sent to SumUp's own hosted
+ * page. Only once SumUp confirms the money does the draft become a booking —
  * so an abandoned checkout leaves nothing on the dispatch board.
  */
 export async function POST(req: Request) {
-  // Each call prices the trip (Google Directions) and opens a live Stripe
-  // session — cap per IP so it can't be scripted to run up bills.
+  // Each call prices the trip (Google Directions) and opens a live SumUp
+  // checkout — cap per IP so it can't be scripted to run up bills.
   if (!rateLimit(`checkout:${clientIp(req)}`, 20, 60_000)) {
     return NextResponse.json({ ok: false, error: "rate_limited" }, { status: 429 });
   }
@@ -31,8 +31,8 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "card_disabled" });
   }
 
-  const stripe = await getStripe();
-  if (!stripe) return NextResponse.json({ ok: false, error: "payments_not_configured" });
+  const sumup = getSumUp();
+  if (!sumup) return NextResponse.json({ ok: false, error: "payments_not_configured" });
 
   const b = (await req.json().catch(() => ({}))) as Partial<BookingInput>;
 
@@ -46,20 +46,20 @@ export async function POST(req: Request) {
   if (!apiKey) return NextResponse.json({ ok: false, error: "invalid_website" });
 
   const input = b as BookingInput;
-  const total = await priceTrip(apiKey, {
+  const priced = await priceTrip(apiKey, {
     category_id: input.category_id,
     child_seat: input.child_seat,
     outbound: input.outbound,
     return: input.return ?? null,
   });
-  if (total == null) return NextResponse.json({ ok: false, error: "quote_failed" });
+  if (priced == null) return NextResponse.json({ ok: false, error: "quote_failed" });
 
-  const amount = toMinor(total);
-  if (amount < 30) return NextResponse.json({ ok: false, error: "amount_too_low" });
+  const total = round2(priced);
+  if (total < 0.3) return NextResponse.json({ ok: false, error: "amount_too_low" });
 
   const origin = process.env.NEXT_PUBLIC_SITE_URL || new URL(req.url).origin;
-  // Generated up front so the cancel_url can point back at this exact draft and
-  // refill the form the customer already typed.
+  // Generated up front: it is the SumUp checkout_reference and rides on the
+  // redirect URL, so the return page knows which trip this payment was for.
   const draftId = randomUUID();
   const sig = quoteSignature({
     site,
@@ -83,10 +83,8 @@ export async function POST(req: Request) {
 
   const admin = createAdminClient();
 
-  // Pressing "Pay" again for the same trip — after backing out of Stripe, or on
-  // a second tab — must land on the SAME checkout, not open a new one. (It also
-  // avoids a Stripe idempotency clash: the same key with a fresh draft id in the
-  // body is rejected outright, which used to break the whole resume flow.)
+  // Pressing "Pay" again for the same trip — after backing out of SumUp, or on
+  // a second tab — must land on the SAME checkout, not open a new one.
   const { data: reusable } = await admin
     .from("checkout_drafts")
     .select("id, session_id")
@@ -100,67 +98,54 @@ export async function POST(req: Request) {
 
   if (reusable) {
     try {
-      const existing = await stripe.checkout.sessions.retrieve(reusable.session_id);
-      if (existing.status === "open" && existing.url) {
-        const res = NextResponse.json({ ok: true, url: existing.url, draft_id: reusable.id, amount: total });
+      const existing = await sumup.getCheckout(reusable.session_id);
+      if (existing.status === "PENDING" && existing.hosted_checkout_url) {
+        const res = NextResponse.json({
+          ok: true,
+          url: existing.hosted_checkout_url,
+          draft_id: reusable.id,
+          amount: total,
+        });
         res.headers.set("Set-Cookie", draftCookieValue(req, reusable.id));
         return res;
       }
     } catch {
-      /* gone or expired at Stripe's end — fall through and open a fresh one */
+      /* gone or expired at SumUp's end — fall through and open a fresh one */
     }
   }
 
-  let session;
+  let checkout;
   try {
-    session = await stripe.checkout.sessions.create(
-      {
-        mode: "payment",
-        // "Book" instead of "Pay" on the button — it is a ride, not a product.
-        submit_type: "book",
-        locale: "en-GB",
-        customer_email: input.email,
-        client_reference_id: draftId,
-        line_items: [
-          {
-            quantity: 1,
-            price_data: {
-              currency: "gbp",
-              unit_amount: amount,
-              product_data: {
-                name: input.return ? "Taxi booking (return)" : "Taxi booking",
-                // Stripe caps this; the journey is the part worth showing.
-                description: `${journey} · ${when}`.slice(0, 500),
-              },
-            },
-          },
-        ],
-        success_url: `${origin}/booking/complete?session_id={CHECKOUT_SESSION_ID}`,
-        cancel_url: `${origin}/book?resume=${draftId}`,
-        // Stripe's minimum window is 30 minutes; the draft expires alongside it.
-        expires_at: Math.floor(Date.now() / 1000) + 30 * 60,
-        metadata: { draft_id: draftId, site, category_id: input.category_id, quote_sig: sig },
-        payment_intent_data: {
-          description: `Taxi booking — ${journey}`.slice(0, 1000),
-          metadata: { draft_id: draftId, site, category_id: input.category_id, quote_sig: sig },
-        },
-      },
-      // Keyed on this draft so our own retry of the same request is safe. The
-      // "same trip twice" case is handled by the reuse lookup above, not here —
-      // keying on the trip would make every new draft collide.
-      { idempotencyKey: `checkout:${draftId}` }
-    );
+    checkout = await sumup.createCheckout({
+      // Unique per attempt — SumUp refuses a second checkout with the same one,
+      // which also makes our own retry of this call safe.
+      checkout_reference: draftId,
+      amount: total,
+      currency: "GBP",
+      description: `${input.return ? "Taxi booking (return)" : "Taxi booking"} · ${journey} · ${when}`.slice(0, 255),
+      // Where the customer lands after paying.
+      redirect_url: `${origin}/booking/complete?draft=${draftId}`,
+      // Server-to-server status notification — the safety net for a customer
+      // who pays and never makes it back to the site.
+      return_url: `${origin}/api/webhooks/sumup`,
+      // The draft expires alongside it.
+      valid_until: new Date(Date.now() + 30 * 60_000).toISOString(),
+    });
   } catch (err) {
-    console.error("[checkout] session create failed", err);
-    return NextResponse.json({ ok: false, error: "stripe_error" });
+    console.error("[checkout] SumUp checkout create failed", err);
+    return NextResponse.json({ ok: false, error: "payment_provider_error" });
+  }
+
+  if (!checkout?.id || !checkout.hosted_checkout_url) {
+    console.error("[checkout] SumUp returned no hosted checkout URL", checkout);
+    return NextResponse.json({ ok: false, error: "payment_provider_error" });
   }
 
   // Park the trip. If this fails the customer could pay for something we can
-  // never turn into a booking — so cancel the session rather than risk it.
+  // never turn into a booking — so deactivate the checkout rather than risk it.
   const { error } = await admin.from("checkout_drafts").insert({
     id: draftId,
-    session_id: session.id,
-    payment_intent_id: typeof session.payment_intent === "string" ? session.payment_intent : null,
+    session_id: checkout.id,
     payload: input,
     amount: total,
     currency: "gbp",
@@ -171,16 +156,16 @@ export async function POST(req: Request) {
   });
 
   if (error) {
-    console.error("[checkout] could not save draft — expiring session", error);
+    console.error("[checkout] could not save draft — deactivating checkout", error);
     try {
-      await stripe.checkout.sessions.expire(session.id);
+      await sumup.deactivateCheckout(checkout.id);
     } catch {
-      /* best effort; the session expires on its own in 30 minutes anyway */
+      /* best effort; the checkout expires on its own in 30 minutes anyway */
     }
     return NextResponse.json({ ok: false, error: "draft_failed" });
   }
 
-  const res = NextResponse.json({ ok: true, url: session.url, draft_id: draftId, amount: total });
+  const res = NextResponse.json({ ok: true, url: checkout.hosted_checkout_url, draft_id: draftId, amount: total });
   // Marks this browser as the owner, so only it can read the trip back.
   res.headers.set("Set-Cookie", draftCookieValue(req, draftId));
   return res;

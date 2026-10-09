@@ -4,6 +4,8 @@ export type UserRole = "driver" | "dispatcher" | "admin";
 export type DriverAvailability = "offline" | "online" | "on_trip";
 export type PaymentMethod = "cash" | "card";
 export type PaymentStatus = "pending" | "paid" | "failed" | "refunded";
+/** Office-side status staff set by hand. Separate from the ride lifecycle (BookingStatus). */
+export type JobStatus = "processing" | "on_hold" | "completed" | "cancelled" | "refunded";
 export type ChargeType = "fixed" | "percentage";
 
 export type BookingStatus =
@@ -134,6 +136,9 @@ export interface Booking {
   payment_method: PaymentMethod;
   payment_status: PaymentStatus;
   status: BookingStatus;
+  job_status: JobStatus;
+  /** Set when the customer paid online through SumUp. */
+  sumup_transaction_id: string | null;
   child_seat: boolean;
   passengers: number;
   suitcases: number;
@@ -172,7 +177,7 @@ export interface Payment {
   currency: string;
   method: PaymentMethod;
   status: PaymentStatus;
-  stripe_payment_intent_id: string | null;
+  sumup_transaction_id: string | null;
   receipt_url: string | null;
   /** Money moved but something did not line up — staff must check it. */
   needs_review: boolean;

@@ -1,5 +1,5 @@
-// TaxiFlow service worker — app-shell caching + offline fallback
-const CACHE = "taxiflow-v1";
+// Black Falcon 247 Taxi service worker — app-shell caching + offline fallback
+const CACHE = "blackfalcon-v1";
 const PRECACHE = [
   "/offline.html",
   "/icon-192.png",

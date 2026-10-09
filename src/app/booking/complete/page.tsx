@@ -19,7 +19,7 @@ interface Result {
 }
 
 /**
- * Where Stripe sends the customer after paying.
+ * Where SumUp sends the customer after paying.
  *
  * The booking does not exist yet when this page opens — it is created here, from
  * the trip parked before checkout. The webhook is doing the same thing in
@@ -36,11 +36,11 @@ export default function BookingCompletePage() {
 
 function Complete() {
   const params = useSearchParams();
-  const sessionId = params.get("session_id");
+  const draftId = params.get("draft");
   const [result, setResult] = useState<Result | null>(null);
 
   useEffect(() => {
-    if (!sessionId) {
+    if (!draftId) {
       setResult({ ok: false, error: "missing_session" });
       return;
     }
@@ -55,7 +55,7 @@ function Complete() {
           const res = await fetch("/api/payment/complete", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ session_id: sessionId }),
+            body: JSON.stringify({ draft_id: draftId }),
           });
           const data = (await res.json()) as Result;
           if (cancelled) return;
@@ -75,12 +75,15 @@ function Complete() {
         }
         await sleep(1500);
       }
+      // Still not settled after ~20 seconds. SumUp will tell us when it is (and
+      // the booking is made then), so stop the spinner and say so.
+      if (!cancelled) setResult((r) => (r?.ok && r.pending ? { ok: false, error: "still_processing" } : r));
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [sessionId]);
+  }, [draftId]);
 
   if (!result || (result.ok && result.pending)) return <Waiting />;
   if (!result.ok || !result.bookingNumber) return <Problem error={result.error} />;
@@ -163,9 +166,13 @@ function Waiting() {
 }
 
 const PROBLEMS: Record<string, { title: string; body: string }> = {
+  still_processing: {
+    title: "Your payment is still being confirmed",
+    body: "SumUp is still confirming this payment. As soon as it does, your booking is made and the confirmation is emailed to you — please don't pay again.",
+  },
   not_paid: {
     title: "Payment not completed",
-    body: "Stripe hasn't confirmed a payment for this checkout, so nothing has been charged and no booking was made. You can start again whenever you're ready.",
+    body: "SumUp hasn't confirmed a payment for this checkout, so nothing has been charged and no booking was made. You can start again whenever you're ready.",
   },
   unknown_session: {
     title: "We couldn't find this checkout",
@@ -182,7 +189,7 @@ function Problem({ error }: { error?: string }) {
     title: "We're finishing your booking",
     body: "Your payment went through but we hit a snag saving the booking. Our team has already been alerted and will call you shortly — please don't pay again.",
   };
-  const reassuring = !PROBLEMS[error ?? ""] || error === "unknown_session";
+  const reassuring = !PROBLEMS[error ?? ""] || error === "unknown_session" || error === "still_processing";
 
   return (
     <Shell>

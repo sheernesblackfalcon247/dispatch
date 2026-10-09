@@ -10,9 +10,9 @@ On a brand-new, empty Supabase project, run these in the SQL editor **in order**
 4. `02_seed.sql` — car classes, distance bands, surcharges, default settings
 
 That's it. `00` and `01` are a full snapshot of the database as it stood on
-2026-09-23, so the other dated files below are already folded into them — you do
-not need to run them on a fresh project (they are idempotent, so running them
-does no harm either).
+2026-09-23, plus the 2026-10-09 SumUp and job-status changes, so the other dated
+files below are already folded into them — you do not need to run them on a
+fresh project (they are idempotent, so running them does no harm either).
 
 Then two things `02_seed.sql` deliberately leaves out, because they belong to
 whoever runs this particular instance:
@@ -46,3 +46,5 @@ included in `00`/`01` except where noted.
 | `2026-09-12_stripe_checkout.sql` | `checkout_drafts` — trips parked while the customer pays on Stripe |
 | `2026-09-15_external_bookings.sql` | Off-platform bookings — **also defines `create_external_booking()`, so run this one** |
 | `2026-09-28_distance_bands_add_up.sql` | "Add up distance bands" switch in Admin → Pricing. Already in `01`/`02` for new instances; **run it on every instance created before 2026-09-28** |
+| `2026-10-09_sumup.sql` | Card payments move from Stripe to SumUp: renames the payment-id columns, drops `stripe_events`. Already in `00`/`01` for new instances; **run it on every instance created before 2026-10-09** |
+| `2026-10-09_job_status.sql` | Manual job status on bookings (processing, on hold, completed, cancelled, refunded). Already in `00` for new instances; **run it on every instance created before 2026-10-09** |

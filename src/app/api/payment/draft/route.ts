@@ -6,7 +6,8 @@ import { ownsDraft } from "@/lib/draftCookie";
 /**
  * Give a cancelled checkout its form contents back.
  *
- * When someone backs out of Stripe they land on /book?resume=<draft id>, and
+ * When someone backs out of SumUp they return to /book (by the back button,
+ * or a /book?resume=<draft id> link), and
  * this hands the widget the trip they already typed so they don't have to enter
  * addresses, name and phone a second time.
  *

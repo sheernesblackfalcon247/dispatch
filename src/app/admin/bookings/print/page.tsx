@@ -197,7 +197,7 @@ function Report() {
       )}
 
       <p className="mt-6 text-[10px] text-gray-400">
-        TaxiFlow · {rows.length} booking{rows.length === 1 ? "" : "s"} · {rangeLabel}
+        Black Falcon 247 Taxi · {rows.length} booking{rows.length === 1 ? "" : "s"} · {rangeLabel}
       </p>
     </div>
   );

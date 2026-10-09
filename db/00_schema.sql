@@ -1,5 +1,5 @@
 -- ─────────────────────────────────────────────────────────────────────────────
--- TaxiFlow — complete database schema
+-- Black Falcon 247 Taxi — complete database schema
 --
 -- Everything a FRESH Supabase project needs to run this app: types, tables,
 -- keys, indexes, functions, triggers and row-level security. Run this once on
@@ -202,7 +202,9 @@ create table if not exists public.bookings (
   passengers integer default 1 not null,
   suitcases integer default 0 not null,
   hand_luggage integer default 0 not null,
-  stripe_payment_intent_id text,
+  sumup_transaction_id text,
+  -- Office-side status set by hand (see db/2026-10-09_job_status.sql). Not the ride lifecycle.
+  job_status text default 'processing'::text not null,
   cash_settled boolean default false not null,
   cash_settled_at timestamp with time zone,
   external_driver_name text,
@@ -216,7 +218,7 @@ create table if not exists public.bookings (
   external_provider text
 );
 
--- The money ledger: card through Stripe, cash closed by a dispatcher, and
+-- The money ledger: card through SumUp, cash closed by a dispatcher, and
 -- off-platform jobs entered by staff all land here.
 create table if not exists public.payments (
   id uuid default gen_random_uuid() not null,
@@ -225,7 +227,7 @@ create table if not exists public.payments (
   method payment_method not null,
   status payment_status default 'pending'::payment_status not null,
   created_at timestamp with time zone default now() not null,
-  stripe_payment_intent_id text,
+  sumup_transaction_id text,
   receipt_url text,
   refunded_at timestamp with time zone,
   currency text default 'gbp'::text not null,
@@ -238,12 +240,12 @@ create table if not exists public.payments (
   updated_at timestamp with time zone default now() not null
 );
 
--- Booking requests parked while the customer pays on Stripe Checkout. Not
+-- Booking requests parked while the customer pays on SumUp. Not
 -- bookings — nothing here is dispatched.
 create table if not exists public.checkout_drafts (
   id uuid default gen_random_uuid() not null,
   session_id text not null,
-  payment_intent_id text,
+  transaction_id text,
   payload jsonb not null,
   amount numeric not null,
   currency text default 'gbp'::text not null,
@@ -256,15 +258,6 @@ create table if not exists public.checkout_drafts (
   completed_at timestamp with time zone,
   expires_at timestamp with time zone default (now() + '00:30:00'::interval) not null,
   quote_sig text
-);
-
--- One row per Stripe webhook event: insert-first gives exactly-once processing.
-create table if not exists public.stripe_events (
-  id text not null,
-  type text not null,
-  received_at timestamp with time zone default now() not null,
-  processed_at timestamp with time zone,
-  error text
 );
 
 create table if not exists public.ride_events (
@@ -328,7 +321,6 @@ alter table public.pricing_rules     add constraint pricing_rules_pkey PRIMARY K
 alter table public.profiles          add constraint profiles_pkey PRIMARY KEY (id);
 alter table public.ratings           add constraint ratings_pkey PRIMARY KEY (id);
 alter table public.ride_events       add constraint ride_events_pkey PRIMARY KEY (id);
-alter table public.stripe_events     add constraint stripe_events_pkey PRIMARY KEY (id);
 alter table public.vehicle_categories add constraint vehicle_categories_pkey PRIMARY KEY (id);
 alter table public.vehicles          add constraint vehicles_pkey PRIMARY KEY (id);
 alter table public.websites          add constraint websites_pkey PRIMARY KEY (id);
@@ -343,6 +335,8 @@ alter table public.websites        add constraint websites_slug_key UNIQUE (slug
 alter table public.bookings add constraint bookings_one_driver_only
   CHECK (((driver_id IS NULL) OR (external_driver_name IS NULL)));
 alter table public.ratings  add constraint ratings_rating_check CHECK (((rating >= 1) AND (rating <= 5)));
+alter table public.bookings add constraint bookings_job_status_check
+  CHECK ((job_status = ANY (ARRAY['processing'::text, 'on_hold'::text, 'completed'::text, 'cancelled'::text, 'refunded'::text])));
 
 alter table public.bookings add constraint bookings_customer_id_fkey FOREIGN KEY (customer_id) REFERENCES customers(id);
 alter table public.bookings add constraint bookings_dispatcher_id_fkey FOREIGN KEY (dispatcher_id) REFERENCES profiles(id);
@@ -367,7 +361,7 @@ alter table public.vehicles add constraint vehicles_driver_id_fkey FOREIGN KEY (
 create index if not exists activity_logs_created_idx ON public.activity_logs USING btree (created_at DESC);
 create index if not exists bookings_external_driver_idx ON public.bookings USING btree (external_driver_name) WHERE (external_driver_name IS NOT NULL);
 create index if not exists bookings_external_provider_idx ON public.bookings USING btree (external_provider) WHERE (external_provider IS NOT NULL);
-create index if not exists checkout_drafts_pi_idx ON public.checkout_drafts USING btree (payment_intent_id);
+create index if not exists checkout_drafts_txn_idx ON public.checkout_drafts USING btree (transaction_id);
 create index if not exists checkout_drafts_reuse_idx ON public.checkout_drafts USING btree (quote_sig, status) WHERE (status = 'open'::text);
 create index if not exists checkout_drafts_status_idx ON public.checkout_drafts USING btree (status, created_at DESC);
 create index if not exists idx_bookings_created ON public.bookings USING btree (created_at DESC);
@@ -382,11 +376,11 @@ create index if not exists payments_booking_idx ON public.payments USING btree (
 create index if not exists payments_review_idx ON public.payments USING btree (needs_review, created_at DESC);
 create index if not exists pricing_bands_category_from_idx ON public.pricing_bands USING btree (category_id, from_km);
 
--- One PaymentIntent can only ever be credited to one booking. This is the
+-- One SumUp transaction can only ever be credited to one booking. This is the
 -- database-level backstop for the replay guard in the app.
-create unique index if not exists payments_stripe_payment_intent_id_key
-  ON public.payments USING btree (stripe_payment_intent_id)
-  WHERE (stripe_payment_intent_id IS NOT NULL);
+create unique index if not exists payments_sumup_transaction_id_key
+  ON public.payments USING btree (sumup_transaction_id)
+  WHERE (sumup_transaction_id IS NOT NULL);
 
 -- ── Extensions used by the schema ────────────────────────────────────────────
 create extension if not exists cube with schema extensions;

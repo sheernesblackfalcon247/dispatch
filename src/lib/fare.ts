@@ -4,7 +4,7 @@
  * A return trip is stored as two booking rows, and almost everything downstream
  * — cash collection, driver settlement, analytics — reads the per-leg
  * `estimated_fare`. So whenever a trip total is set as a single number (a staff
- * custom price, or the amount Stripe actually charged), it has to be pushed back
+ * custom price, or the amount SumUp actually charged), it has to be pushed back
  * into the legs in a way that still sums to that total.
  */
 export function splitFare(total: number, outOriginal: number, retOriginal: number): { out: number; ret: number } {

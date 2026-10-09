@@ -7,7 +7,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
  * variables when unset, so nothing breaks before the admin fills it in. Values
  * are cached briefly to avoid a DB hit on every request.
  *
- * NOTE: Secret keys (Stripe/Resend/Cosmic SMS) are NOT stored here — they stay
+ * NOTE: Secret keys (SumUp/Resend/Cosmic SMS) are NOT stored here — they stay
  * in the environment (.env / Vercel) only, read directly via process.env.
  */
 type CacheEntry = { v: string | undefined; exp: number };

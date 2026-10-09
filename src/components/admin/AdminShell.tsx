@@ -57,7 +57,7 @@ export default function AdminShell({
           </div>
           <div>
             <p className="font-display text-sm font-bold leading-tight text-ink-950">Super Admin</p>
-            <p className="text-xs text-gray-400">TaxiFlow</p>
+            <p className="text-xs text-gray-400">Black Falcon 247 Taxi</p>
           </div>
         </div>
 

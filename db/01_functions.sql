@@ -1,5 +1,5 @@
 -- ─────────────────────────────────────────────────────────────────────────────
--- TaxiFlow — business logic, triggers and row-level security
+-- Black Falcon 247 Taxi — business logic, triggers and row-level security
 --
 -- Run AFTER db/00_schema.sql on a fresh Supabase project.
 -- Generated from the original project, 2026-09-23.
@@ -441,8 +441,8 @@ drop trigger if exists trg_profiles_updated on public.profiles;
 CREATE TRIGGER trg_profiles_updated BEFORE UPDATE ON public.profiles FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 -- ── Row level security ───────────────────────────────────────────────────────
--- checkout_drafts and stripe_events get RLS with NO policies on purpose: only
--- the service role (which bypasses RLS) may touch them.
+-- checkout_drafts gets RLS with NO policies on purpose: only
+-- the service role (which bypasses RLS) may touch it.
 alter table public.activity_logs      enable row level security;
 alter table public.app_settings       enable row level security;
 alter table public.bookings           enable row level security;
@@ -456,7 +456,6 @@ alter table public.pricing_rules      enable row level security;
 alter table public.profiles           enable row level security;
 alter table public.ratings            enable row level security;
 alter table public.ride_events        enable row level security;
-alter table public.stripe_events      enable row level security;
 alter table public.vehicle_categories enable row level security;
 alter table public.vehicles           enable row level security;
 alter table public.websites           enable row level security;

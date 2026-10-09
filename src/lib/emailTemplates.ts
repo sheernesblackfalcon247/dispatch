@@ -154,7 +154,7 @@ export function staffAlertEmail(d: BookingEmailData, dispatchUrl?: string): { su
     preheader: `New booking ${d.bookingNumber} from ${d.customerName}.`,
     heading: "New booking received",
     sub: `A new ride has come in${d.siteName ? ` via ${escapeHtml(d.siteName)}` : ""}. Assign a driver from the dispatch board.`,
-    footer: "TaxiFlow Dispatch",
+    footer: "Black Falcon 247 Taxi Dispatch",
     body: `
       ${detailsTable(d)}
       ${dispatchUrl ? `<div style="margin-top:22px;">${button(dispatchUrl, "Open dispatch board")}</div>` : ""}`,
@@ -193,7 +193,7 @@ export interface StaffWelcomeData {
  * button (→ /install page, which triggers the PWA install prompt).
  */
 export function staffWelcomeEmail(d: StaffWelcomeData): { subject: string; html: string } {
-  const site = d.siteName || "TaxiFlow";
+  const site = d.siteName || "Black Falcon 247 Taxi";
   const first = escapeHtml(d.fullName.split(" ")[0] || "there");
   const roleLabel = d.role === "admin" ? "Administrator" : "Dispatcher";
   const area = d.role === "admin" ? "admin panel" : "dispatch board";
@@ -264,13 +264,14 @@ function installButton(url: string, label: string): string {
 /* Payment problems                                                          */
 /* ────────────────────────────────────────────────────────────────────────── */
 
-export type PaymentAlertKind = "unmatched" | "review" | "dispute" | "refunded";
+export type PaymentAlertKind = "unmatched" | "review";
 
 export interface PaymentAlertData {
   kind: PaymentAlertKind;
   /** Amount that actually moved, in pounds. */
   amount: number;
-  paymentIntentId: string;
+  /** SumUp transaction id. */
+  transactionId: string;
   /** Plain-English explanation of what did not line up. */
   reason: string;
   bookingNumber?: string | null;
@@ -292,30 +293,20 @@ const ALERT_COPY: Record<PaymentAlertKind, { subject: string; heading: string; s
     heading: "⚠️ Payment needs review",
     sub: "A card payment went through but something about it did not line up with the booking. Check it before the driver goes out — the details are below.",
   },
-  dispute: {
-    subject: "Card payment disputed",
-    heading: "🚨 Chargeback opened",
-    sub: "A customer has disputed a card payment with their bank. Respond in the Stripe Dashboard before the deadline or the money is lost automatically.",
-  },
-  refunded: {
-    subject: "Card payment refunded in Stripe",
-    heading: "Payment refunded",
-    sub: "A refund was issued from the Stripe Dashboard. The booking has been updated to match.",
-  },
 };
 
 /** Internal alert to admin/dispatch when money and bookings disagree. */
 export function paymentAlertEmail(d: PaymentAlertData): { subject: string; html: string } {
   const copy = ALERT_COPY[d.kind];
   const html = shell({
-    preheader: `${copy.subject} — ${money(d.amount)} · ${d.paymentIntentId}`,
+    preheader: `${copy.subject} — ${money(d.amount)} · ${d.transactionId}`,
     heading: copy.heading,
     sub: copy.sub,
-    footer: "TaxiFlow Payments",
+    footer: "Black Falcon 247 Taxi Payments",
     body: `
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
         ${row("Amount", money(d.amount), true)}
-        ${row("Stripe intent", `<span style="font-family:monospace;font-size:12px;">${escapeHtml(d.paymentIntentId)}</span>`)}
+        ${row("SumUp transaction", `<span style="font-family:monospace;font-size:12px;">${escapeHtml(d.transactionId)}</span>`)}
         ${d.bookingNumber ? row("Booking", `<span style="font-family:monospace;">${escapeHtml(d.bookingNumber)}</span>`) : ""}
         ${d.customerName ? row("Customer", escapeHtml(d.customerName)) : ""}
         ${d.customerEmail ? row("Email", escapeHtml(d.customerEmail)) : ""}
@@ -324,7 +315,7 @@ export function paymentAlertEmail(d: PaymentAlertData): { subject: string; html:
       ${d.paymentsUrl ? `<div style="margin-top:22px;">${button(d.paymentsUrl, "Open Payments")}</div>` : ""}
       ${
         d.receiptUrl
-          ? `<p style="margin:14px 0 0 0;font-size:13px;"><a href="${escapeAttr(d.receiptUrl)}" style="color:#6b7280;">View the Stripe receipt →</a></p>`
+          ? `<p style="margin:14px 0 0 0;font-size:13px;"><a href="${escapeAttr(d.receiptUrl)}" style="color:#6b7280;">View the receipt →</a></p>`
           : ""
       }`,
   });

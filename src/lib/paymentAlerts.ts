@@ -39,7 +39,7 @@ const GRACE_MS = 10 * 60_000;
  * orphans (no booking) and anything flagged for review.
  *
  * There is no cron in this app, so it is called opportunistically: on every
- * Stripe webhook delivery and whenever an admin opens the Payments page. The
+ * SumUp notification and whenever an admin opens the Payments page. The
  * `alerted_at` stamp makes it safe to run as often as we like.
  */
 export async function sweepUnmatchedPayments(origin?: string): Promise<number> {
@@ -52,7 +52,7 @@ export async function sweepUnmatchedPayments(origin?: string): Promise<number> {
 
     const { data: rows } = await admin
       .from("payments")
-      .select("id, booking_id, amount, stripe_payment_intent_id, receipt_url, needs_review, review_reason, created_at")
+      .select("id, booking_id, amount, sumup_transaction_id, receipt_url, needs_review, review_reason, created_at")
       .eq("status", "paid")
       .is("alerted_at", null)
       .lt("created_at", cutoff)
@@ -64,7 +64,7 @@ export async function sweepUnmatchedPayments(origin?: string): Promise<number> {
       id: string;
       booking_id: string | null;
       amount: number;
-      stripe_payment_intent_id: string | null;
+      sumup_transaction_id: string | null;
       receipt_url: string | null;
       review_reason: string | null;
     }[]) {
@@ -72,7 +72,7 @@ export async function sweepUnmatchedPayments(origin?: string): Promise<number> {
         {
           kind: r.booking_id ? "review" : "unmatched",
           amount: Number(r.amount) || 0,
-          paymentIntentId: r.stripe_payment_intent_id ?? "(none)",
+          transactionId: r.sumup_transaction_id ?? "(none)",
           reason:
             r.review_reason ||
             "The card was charged but no booking was ever attached to this payment.",

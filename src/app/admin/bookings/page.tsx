@@ -32,8 +32,8 @@ import ExternalBookingModal from "@/components/dashboard/ExternalBookingModal";
 import StatusBadge from "@/components/dashboard/StatusBadge";
 import SheetHandle from "@/components/dashboard/SheetHandle";
 import { money, clock, cn, dateTimeFull } from "@/lib/format";
-import { STATUS_META } from "@/lib/constants";
-import type { Booking, BookingStatus } from "@/lib/types";
+import { STATUS_META, JOB_STATUS_META } from "@/lib/constants";
+import type { Booking, BookingStatus, JobStatus, PaymentMethod, PaymentStatus } from "@/lib/types";
 
 interface Row extends Booking {
   category?: { name: string } | null;
@@ -43,6 +43,26 @@ interface Row extends Booking {
 }
 
 const FILTERS: (BookingStatus | "all")[] = ["all", "pending", "in_progress", "completed", "cancelled"];
+
+const JOB_STATUSES: JobStatus[] = ["processing", "on_hold", "completed", "cancelled", "refunded"];
+
+/** How staff record payment by hand. Website card payments arrive already "card". */
+type PaymentChoice = "unpaid" | "card" | "cash";
+const PAYMENT_CHOICES: { key: PaymentChoice; label: string; Icon: typeof CreditCard }[] = [
+  { key: "unpaid", label: "Unpaid", Icon: CircleDot },
+  { key: "card", label: "Paid by card", Icon: CreditCard },
+  { key: "cash", label: "Paid by cash", Icon: Banknote },
+];
+
+function JobStatusBadge({ status }: { status: JobStatus | null | undefined }) {
+  const m = JOB_STATUS_META[status ?? "processing"] ?? JOB_STATUS_META.processing;
+  return (
+    <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold", m.bg, m.color)}>
+      <span className={cn("h-1.5 w-1.5 rounded-full", m.dot)} />
+      {m.label}
+    </span>
+  );
+}
 
 /**
  * Who drove this job. Rides handed to another company have no `drivers` row —
@@ -192,7 +212,10 @@ export default function BookingsPage() {
                         </span>
                       )}
                     </span>
-                    <StatusBadge status={r.status} size="xs" />
+                    <span className="flex shrink-0 items-center gap-1">
+                      <JobStatusBadge status={r.job_status} />
+                      <StatusBadge status={r.status} size="xs" />
+                    </span>
                   </div>
                   <p className="flex items-center gap-1.5 text-sm font-medium text-ink-950">
                     <span className="truncate">{r.customer_name}</span>
@@ -275,7 +298,12 @@ export default function BookingsPage() {
                         )}
                         {driverLabel(r, "—")}
                       </td>
-                      <td className="px-3 py-3"><StatusBadge status={r.status} size="xs" /></td>
+                      <td className="px-3 py-3">
+                        <div className="flex flex-col items-start gap-1">
+                          <StatusBadge status={r.status} size="xs" />
+                          <JobStatusBadge status={r.job_status} />
+                        </div>
+                      </td>
                       <td className="px-3 py-3 text-right font-display font-bold text-ink-950">{money(r.estimated_fare)}</td>
                       <td className="px-5 py-3 text-right text-xs text-gray-400">{clock(r.created_at)}</td>
                     </motion.tr>
@@ -307,12 +335,7 @@ export default function BookingsPage() {
               : null
           }
           onClose={() => setDetail(null)}
-          onRefunded={(id) =>
-            setRows((rs) => rs.map((x) => (x.id === id ? { ...x, payment_status: "refunded" } : x)))
-          }
-          onStatusChanged={(id, status) =>
-            setRows((rs) => rs.map((x) => (x.id === id ? { ...x, status } : x)))
-          }
+          onChanged={(id, patch) => setRows((rs) => rs.map((x) => (x.id === id ? { ...x, ...patch } : x)))}
         />
       )}
     </div>
@@ -323,20 +346,15 @@ function BookingDetailModal({
   row,
   linked,
   onClose,
-  onRefunded,
-  onStatusChanged,
+  onChanged,
 }: {
   row: Row;
   linked?: Row | null;
   onClose: () => void;
-  onRefunded: (id: string) => void;
-  onStatusChanged: (id: string, status: BookingStatus) => void;
+  onChanged: (id: string, patch: Partial<Row>) => void;
 }) {
   const vias = (row.via_points ?? []).filter((v) => v.address);
   const review = row.review?.[0] ?? null;
-  const [payStatus, setPayStatus] = useState<string>(row.payment_status);
-  const [refunding, setRefunding] = useState(false);
-  const [refundErr, setRefundErr] = useState<string | null>(null);
   // Off-platform jobs have no driver and no dispatch flow moving them along, so
   // their status is whatever the office says it is.
   const [status, setStatus] = useState<BookingStatus>(row.status);
@@ -356,32 +374,54 @@ function BookingDetailModal({
       setStatusErr("Could not update the status. Please try again.");
       return;
     }
-    onStatusChanged(row.id, next);
+    onChanged(row.id, { status: next });
   };
 
-  const refund = async () => {
-    if (!confirm(`Refund ${money(row.estimated_fare)} to ${row.customer_name}?`)) return;
-    setRefunding(true);
-    setRefundErr(null);
-    try {
-      const res = await fetch("/api/payment/refund", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ booking_id: row.id }),
-      });
-      const data = await res.json();
-      setRefunding(false);
-      if (!data?.ok) {
-        setRefundErr("Refund failed. Please try again.");
-        return;
-      }
-      setPayStatus("refunded");
-      onRefunded(row.id);
-    } catch {
-      setRefunding(false);
-      setRefundErr("Refund failed. Please try again.");
+  // ── Office controls: job status and payment, set by hand ────────────────
+  // Refunds are NOT done from here — money goes back from the SumUp Dashboard,
+  // and staff then mark the job "Refunded".
+  const [jobStatus, setJobStatus] = useState<JobStatus>(row.job_status ?? "processing");
+  const [pay, setPay] = useState<{ method: PaymentMethod; status: PaymentStatus }>({
+    method: row.payment_method,
+    status: row.payment_status,
+  });
+  const [savingOffice, setSavingOffice] = useState(false);
+  const [officeErr, setOfficeErr] = useState<string | null>(null);
+
+  const saveOffice = async (patch: Partial<Pick<Row, "job_status" | "payment_method" | "payment_status">>) => {
+    setSavingOffice(true);
+    setOfficeErr(null);
+    const supabase = createClient();
+    const { error } = await supabase.from("bookings").update(patch).eq("id", row.id);
+    setSavingOffice(false);
+    if (error) {
+      setOfficeErr("Could not save the change. Please try again.");
+      return false;
     }
+    onChanged(row.id, patch);
+    return true;
   };
+
+  const changeJobStatus = async (next: JobStatus) => {
+    const previous = jobStatus;
+    setJobStatus(next);
+    if (!(await saveOffice({ job_status: next }))) setJobStatus(previous);
+  };
+
+  const changePayment = async (next: PaymentChoice) => {
+    const previous = pay;
+    const target =
+      next === "unpaid"
+        ? { method: pay.method, status: "pending" as PaymentStatus }
+        : { method: (next === "card" ? "card" : "cash") as PaymentMethod, status: "paid" as PaymentStatus };
+    setPay(target);
+    if (!(await saveOffice({ payment_method: target.method, payment_status: target.status }))) setPay(previous);
+  };
+
+  const payChoice: PaymentChoice | null =
+    pay.status === "paid" ? (pay.method === "card" ? "card" : "cash") : pay.status === "pending" ? "unpaid" : null;
+  const paidOnline = !!row.sumup_transaction_id;
+
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4" onClick={onClose}>
       <motion.div
@@ -396,6 +436,7 @@ function BookingDetailModal({
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-mono text-sm font-semibold text-gray-500">{row.booking_number}</span>
               <StatusBadge status={row.status} size="xs" />
+              <JobStatusBadge status={jobStatus} />
             </div>
             <p className="mt-0.5 text-xs text-gray-400">
               {row.source?.name ?? "—"} · {clock(row.created_at)}
@@ -493,46 +534,65 @@ function BookingDetailModal({
         <div className="mt-4 rounded-xl border border-brand-200 bg-brand-50 px-4 py-3">
           <div className="flex items-center justify-between">
             <span className="text-sm font-medium text-brand-800">
-              {payStatus === "paid" ? "Paid" : payStatus === "refunded" ? "Refunded" : "Estimated fare"}
+              {pay.status === "paid" ? "Paid" : pay.status === "refunded" ? "Refunded" : "Estimated fare"}
             </span>
             <span className="font-display text-xl font-bold text-ink-950">{money(row.estimated_fare)}</span>
           </div>
-          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-brand-200/60 pt-2">
-            <span
-              className={cn(
-                "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold",
-                row.payment_method === "cash"
-                  ? payStatus === "paid"
-                    ? "bg-green-100 text-green-700"
-                    : "bg-gray-100 text-gray-600"
-                  : payStatus === "paid"
-                  ? "bg-green-100 text-green-700"
-                  : payStatus === "refunded"
-                  ? "bg-red-100 text-red-700"
-                  : "bg-amber-100 text-amber-700"
-              )}
-            >
-              {row.payment_method === "cash"
-                ? payStatus === "paid"
-                  ? "Cash collected by driver ✓"
-                  : "Cash — not yet collected"
-                : payStatus === "paid"
-                ? "Paid by card"
-                : payStatus === "refunded"
-                ? "Refunded"
-                : "Card — payment pending"}
-            </span>
-            {row.payment_method === "card" && payStatus === "paid" && (
-              <button
-                onClick={refund}
-                disabled={refunding}
-                className="flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
-              >
-                {refunding ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Refund"}
-              </button>
+        </div>
+
+        {/* Office controls — admin and dispatch set these by hand */}
+        <div className="mt-4 space-y-4 rounded-xl border border-gray-200 p-3.5">
+          <div>
+            <p className="mb-2 text-xs font-bold uppercase tracking-wide text-gray-400">Job status</p>
+            <div className="flex flex-wrap gap-1.5">
+              {JOB_STATUSES.map((v) => (
+                <button
+                  key={v}
+                  onClick={() => changeJobStatus(v)}
+                  disabled={savingOffice || jobStatus === v}
+                  className={cn(
+                    "rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors",
+                    jobStatus === v
+                      ? "border-ink-950 bg-ink-950 text-white"
+                      : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                  )}
+                >
+                  {JOB_STATUS_META[v].label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <p className="mb-2 text-xs font-bold uppercase tracking-wide text-gray-400">Payment</p>
+            <div className="flex flex-wrap gap-1.5">
+              {PAYMENT_CHOICES.map((c) => (
+                <button
+                  key={c.key}
+                  onClick={() => changePayment(c.key)}
+                  disabled={savingOffice || payChoice === c.key}
+                  className={cn(
+                    "flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors",
+                    payChoice === c.key
+                      ? c.key === "unpaid"
+                        ? "border-amber-500 bg-amber-500 text-white"
+                        : "border-green-600 bg-green-600 text-white"
+                      : "border-gray-200 bg-white text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                  )}
+                >
+                  <c.Icon className="h-3.5 w-3.5" /> {c.label}
+                </button>
+              ))}
+            </div>
+            {pay.status === "refunded" && (
+              <p className="mt-2 text-xs text-gray-500">The card payment for this ride was refunded.</p>
+            )}
+            {paidOnline && (
+              <p className="mt-2 text-xs text-gray-500">Paid online by card through SumUp.</p>
             )}
           </div>
-          {refundErr && <p className="mt-2 text-xs text-red-600">{refundErr}</p>}
+
+          {officeErr && <p className="text-xs text-red-600">{officeErr}</p>}
         </div>
 
         {row.external_provider && (

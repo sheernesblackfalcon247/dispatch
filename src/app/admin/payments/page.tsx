@@ -6,7 +6,6 @@ import {
   Loader2,
   CreditCard,
   AlertTriangle,
-  RotateCcw,
   ExternalLink,
   ReceiptText,
   ShieldAlert,
@@ -28,7 +27,7 @@ interface Payment {
   failure_reason: string | null;
   disputed_at: string | null;
   receipt_url: string | null;
-  stripe_payment_intent_id: string | null;
+  sumup_transaction_id: string | null;
   booking_id: string | null;
   created_at: string;
   refunded_at: string | null;
@@ -100,7 +99,7 @@ export default function PaymentsPage() {
     <div>
       <PageHeader
         title="Payments"
-        subtitle="Every payment taken — card through Stripe, cash collected by drivers"
+        subtitle="Every payment taken — card through SumUp, cash collected by drivers. Refunds are made in the SumUp Dashboard."
         action={
           <button
             onClick={load}
@@ -118,7 +117,7 @@ export default function PaymentsPage() {
             <div className="min-w-0 text-sm">
               <p className="font-semibold text-amber-900">Payments table not ready</p>
               <p className="mt-0.5 text-amber-800">
-                Run <code className="rounded bg-amber-100 px-1">db/2026-09-12_stripe_hardening.sql</code> in the
+                Run <code className="rounded bg-amber-100 px-1">db/2026-10-09_sumup.sql</code> in the
                 Supabase SQL editor, then refresh this page.
               </p>
               <p className="mt-1 break-words font-mono text-xs text-amber-700">{setupError}</p>
@@ -171,7 +170,7 @@ export default function PaymentsPage() {
         ) : (
           <div className="space-y-3">
             {rows.map((p, i) => (
-              <PaymentCard key={p.id} p={p} index={i} onChanged={load} />
+              <PaymentCard key={p.id} p={p} index={i} />
             ))}
           </div>
         )}
@@ -189,48 +188,13 @@ function Tile({ label, value, tone }: { label: string; value: string; tone: stri
   );
 }
 
-function PaymentCard({ p, index, onChanged }: { p: Payment; index: number; onChanged: () => void }) {
+/**
+ * Refunds are deliberately not offered here: money goes back to customers only
+ * from the SumUp Dashboard, by whoever holds that login. Staff record the
+ * outcome on the booking (job status "Refunded").
+ */
+function PaymentCard({ p, index }: { p: Payment; index: number }) {
   const refundedSoFar = Number(p.amount_refunded ?? 0);
-  const remaining = Math.round((Number(p.amount) - refundedSoFar) * 100) / 100;
-  // Only a Stripe charge can be sent back through Stripe. Cash was handed to a
-  // driver, so there is nothing here to reverse — offering a button that can
-  // only fail would be worse than offering none.
-  const isCard = p.method === "card" && !!p.stripe_payment_intent_id;
-  const canRefund = isCard && p.status === "paid" && remaining > 0;
-
-  const [open, setOpen] = useState(false);
-  const [amount, setAmount] = useState(String(remaining.toFixed(2)));
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  const refund = async () => {
-    const value = Number(amount);
-    if (!Number.isFinite(value) || value <= 0 || value > remaining + 0.001) {
-      setErr(`Enter an amount between 0.01 and ${remaining.toFixed(2)}.`);
-      return;
-    }
-    setBusy(true);
-    setErr(null);
-    try {
-      const res = await fetch("/api/payment/refund", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        // Target the payment row, not the booking — an orphaned payment has no booking.
-        body: JSON.stringify({ payment_id: p.id, amount: value }),
-      });
-      const data = await res.json();
-      setBusy(false);
-      if (!data?.ok) {
-        setErr(REFUND_ERRORS[data?.error as string] ?? "Refund failed. Check Stripe and try again.");
-        return;
-      }
-      setOpen(false);
-      onChanged();
-    } catch {
-      setBusy(false);
-      setErr("Refund failed. Check Stripe and try again.");
-    }
-  };
 
   return (
     <motion.div
@@ -289,8 +253,8 @@ function PaymentCard({ p, index, onChanged }: { p: Payment; index: number; onCha
 
           <p className="mt-0.5 text-xs text-gray-400" title={dateTime(p.created_at)}>
             {timeAgo(p.created_at)}
-            {p.stripe_payment_intent_id && (
-              <span className="ml-2 font-mono text-[11px] text-gray-300">{p.stripe_payment_intent_id}</span>
+            {p.sumup_transaction_id && (
+              <span className="ml-2 font-mono text-[11px] text-gray-300">{p.sumup_transaction_id}</span>
             )}
           </p>
         </div>
@@ -307,14 +271,6 @@ function PaymentCard({ p, index, onChanged }: { p: Payment; index: number; onCha
               <ExternalLink className="h-3 w-3" />
             </a>
           )}
-          {canRefund && (
-            <button
-              onClick={() => setOpen((v) => !v)}
-              className="flex items-center gap-1 rounded-xl border border-red-200 px-2.5 py-2 text-xs font-semibold text-red-600 hover:bg-red-50"
-            >
-              <RotateCcw className="h-4 w-4" /> Refund
-            </button>
-          )}
         </div>
       </div>
 
@@ -329,36 +285,6 @@ function PaymentCard({ p, index, onChanged }: { p: Payment; index: number; onCha
         </p>
       )}
 
-      {open && canRefund && (
-        <div className="flex flex-wrap items-center gap-2 border-t border-gray-100 bg-gray-50 px-4 py-3">
-          <label className="text-xs text-gray-500">Refund</label>
-          <input
-            value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            inputMode="decimal"
-            className="w-28 rounded-lg border border-gray-200 px-2.5 py-1.5 text-sm"
-          />
-          <span className="text-xs text-gray-400">of {money(remaining)} left</span>
-          <button
-            onClick={refund}
-            disabled={busy}
-            className="ml-auto flex items-center gap-1.5 rounded-xl bg-red-600 px-3 py-2 text-xs font-bold text-white disabled:bg-gray-300"
-          >
-            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
-            Confirm refund
-          </button>
-          {err && <p className="w-full text-xs text-red-600">{err}</p>}
-        </div>
-      )}
     </motion.div>
   );
 }
-
-const REFUND_ERRORS: Record<string, string> = {
-  already_refunded: "This payment has already been fully refunded.",
-  amount_too_high: "That is more than is left on this payment.",
-  invalid_amount: "Enter a valid amount.",
-  stripe_unreachable: "Could not reach Stripe. Try again in a moment.",
-  payments_not_configured: "Stripe is not configured on this deployment.",
-  forbidden: "You do not have permission to refund.",
-};

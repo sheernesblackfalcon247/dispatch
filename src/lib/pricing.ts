@@ -4,7 +4,7 @@ import { resolveLegDistance, type LegInput } from "@/lib/googleRoute";
 /**
  * Server-side price for a whole trip.
  *
- * The only number Stripe is ever asked to charge comes from here — distance is
+ * The only number SumUp is ever asked to charge comes from here — distance is
  * re-derived from coordinates and the fare from the pricing RPC, so a client
  * that edits its own payload cannot lower what it pays.
  */
