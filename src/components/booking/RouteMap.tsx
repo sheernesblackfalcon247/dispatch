@@ -1,17 +1,12 @@
 "use client";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import { useEffect, useRef } from "react";
 import { MapPin, Navigation, Loader2 } from "lucide-react";
-import { useGoogleMaps } from "@/lib/useGoogleMaps";
+import type { Map as LeafletMap, Layer } from "leaflet";
+import "leaflet/dist/leaflet.css";
+import { useLeaflet, createMap, dotMarker } from "@/lib/leafletMap";
 import { fetchRoutePath } from "@/lib/polyline";
 import type { PlaceValue } from "@/components/booking/AddressAutocomplete";
-
-declare global {
-  interface Window {
-    google?: any;
-  }
-}
 
 export interface RouteLeg {
   pickup: PlaceValue;
@@ -31,112 +26,75 @@ const hasCoords = (p: PlaceValue) => p.lat != null && p.lng != null;
 const legReady = (l: RouteLeg | null | undefined) => !!l && hasCoords(l.pickup) && hasCoords(l.dropoff);
 
 export default function RouteMap({ outbound, returnLeg }: Props) {
-  const { isLoaded, hasKey, error } = useGoogleMaps();
+  const { L, error } = useLeaflet();
   const mapEl = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<any>(null);
-  const linesRef = useRef<any[]>([]);
-  const markersRef = useRef<any[]>([]);
+  const mapRef = useRef<LeafletMap | null>(null);
+  const layersRef = useRef<Layer[]>([]);
 
   const showReturn = legReady(returnLeg);
 
+  // Tear the map down with the component.
+  useEffect(
+    () => () => {
+      mapRef.current?.remove();
+      mapRef.current = null;
+    },
+    []
+  );
+
   useEffect(() => {
-    if (!isLoaded || !mapEl.current || !window.google?.maps?.Map) return;
-    const g = window.google.maps;
+    if (!L || !mapEl.current) return;
     const timers: ReturnType<typeof setTimeout>[] = [];
     let stale = false;
 
     try {
-      if (!mapRef.current) {
-        mapRef.current = new g.Map(mapEl.current, {
-          center: { lat: 51.5074, lng: -0.1278 },
-          zoom: 11,
-          disableDefaultUI: true,
-          zoomControl: true,
-          gestureHandling: "cooperative",
-          styles: [{ featureType: "poi", stylers: [{ visibility: "off" }] }],
-        });
-      }
+      if (!mapRef.current) mapRef.current = createMap(L, mapEl.current);
+      const map = mapRef.current;
 
       // Reset previous overlays
-      markersRef.current.forEach((m) => m.setMap(null));
-      markersRef.current = [];
-      linesRef.current.forEach((l) => l.setMap(null));
-      linesRef.current = [];
+      layersRef.current.forEach((l) => l.remove());
+      layersRef.current = [];
+      const add = (layer: Layer) => {
+        layer.addTo(map);
+        layersRef.current.push(layer);
+      };
 
       if (!legReady(outbound)) return;
 
-      const addMarker = (lat: number, lng: number, color: string, label: string, z: number) => {
-        markersRef.current.push(
-          new g.Marker({
-            position: { lat, lng },
-            map: mapRef.current,
-            title: label,
-            zIndex: z,
-            icon: {
-              path: g.SymbolPath.CIRCLE,
-              scale: 7,
-              fillColor: color,
-              fillOpacity: 1,
-              strokeColor: "#fff",
-              strokeWeight: 3,
-            },
-          })
-        );
-      };
-
       // Bounds spanning every point of both legs
-      const bounds = new g.LatLngBounds();
+      const points: [number, number][] = [];
       const extend = (l: RouteLeg) => {
-        bounds.extend({ lat: l.pickup.lat, lng: l.pickup.lng });
-        l.vias.filter(hasCoords).forEach((v) => bounds.extend({ lat: v.lat, lng: v.lng }));
-        bounds.extend({ lat: l.dropoff.lat, lng: l.dropoff.lng });
+        points.push([l.pickup.lat!, l.pickup.lng!]);
+        l.vias.filter(hasCoords).forEach((v) => points.push([v.lat!, v.lng!]));
+        points.push([l.dropoff.lat!, l.dropoff.lng!]);
       };
       extend(outbound);
       if (showReturn && returnLeg) extend(returnLeg);
 
       const frame = () => {
         if (!mapRef.current) return;
-        g.event.trigger(mapRef.current, "resize");
-        mapRef.current.fitBounds(bounds, 48);
+        mapRef.current.invalidateSize();
+        mapRef.current.fitBounds(L.latLngBounds(points), { padding: [48, 48], maxZoom: 15 });
       };
       frame();
+      // The map often sits in a panel that is still animating open.
       [80, 250, 600].forEach((ms) => timers.push(setTimeout(frame, ms)));
 
-      const line = (opts: any) =>
-        linesRef.current.push(new g.Polyline({ map: mapRef.current, ...opts }));
-
       // Draw a route's actual path as polished polylines
-      const drawPath = (path: any[], color: string, dashed: boolean) => {
+      const drawPath = (path: { lat: number; lng: number }[], color: string, dashed: boolean) => {
+        const latlngs = path.map((p) => [p.lat, p.lng] as [number, number]);
         if (dashed) {
           // Rounded dots — reads as "return" and lets the outbound show between dots
-          line({
-            path,
-            strokeOpacity: 0,
-            zIndex: 5,
-            icons: [
-              {
-                icon: {
-                  path: g.SymbolPath.CIRCLE,
-                  scale: 2.6,
-                  fillColor: color,
-                  fillOpacity: 1,
-                  strokeColor: "#ffffff",
-                  strokeWeight: 1.2,
-                },
-                offset: "0",
-                repeat: "16px",
-              },
-            ],
-          });
+          add(L.polyline(latlngs, { color, weight: 5, opacity: 1, dashArray: "1 12", lineCap: "round" }));
         } else {
           // White casing (halo) + solid colour on top for depth
-          line({ path, strokeColor: "#ffffff", strokeOpacity: 0.95, strokeWeight: 9, zIndex: 1 });
-          line({ path, strokeColor: color, strokeOpacity: 1, strokeWeight: 5, zIndex: 3 });
+          add(L.polyline(latlngs, { color: "#ffffff", weight: 9, opacity: 0.95 }));
+          add(L.polyline(latlngs, { color, weight: 5, opacity: 1 }));
         }
       };
 
-      // The route comes from our own server (Google Routes API) — the browser
-      // Directions service is a legacy API that new Google projects can't use.
+      // The route comes from our own server (Google Routes API), so the page
+      // never needs a Google key.
       const drawLeg = async (leg: RouteLeg, color: string, dashed: boolean) => {
         const path = await fetchRoutePath(
           { lat: leg.pickup.lat!, lng: leg.pickup.lng! },
@@ -151,9 +109,11 @@ export default function RouteMap({ outbound, returnLeg }: Props) {
       if (showReturn && returnLeg) drawLeg(returnLeg, RETURN_COLOR, true);
 
       // Markers: pickup (green), vias (gray), dropoff (dark). Reverse trip reuses these two ends.
-      addMarker(outbound.pickup.lat!, outbound.pickup.lng!, OUTBOUND_COLOR, "Pick-up", 3);
-      outbound.vias.filter(hasCoords).forEach((v, i) => addMarker(v.lat!, v.lng!, "#9ca3af", `Stop ${i + 1}`, 1));
-      addMarker(outbound.dropoff.lat!, outbound.dropoff.lng!, "#0b0b0f", "Drop-off", 2);
+      add(dotMarker(L, outbound.pickup.lat!, outbound.pickup.lng!, OUTBOUND_COLOR, "Pick-up", undefined, 300));
+      outbound.vias
+        .filter(hasCoords)
+        .forEach((v, i) => add(dotMarker(L, v.lat!, v.lng!, "#9ca3af", `Stop ${i + 1}`, undefined, 100)));
+      add(dotMarker(L, outbound.dropoff.lat!, outbound.dropoff.lng!, "#0b0b0f", "Drop-off", undefined, 200));
     } catch (e) {
       console.error("Route map render failed:", e);
     }
@@ -162,10 +122,10 @@ export default function RouteMap({ outbound, returnLeg }: Props) {
       stale = true;
       timers.forEach(clearTimeout);
     };
-  }, [isLoaded, outbound, returnLeg, showReturn]);
+  }, [L, outbound, returnLeg, showReturn]);
 
-  // Fallback when no key / load failed
-  if (!hasKey || error) {
+  // Fallback when the map library could not load
+  if (error) {
     return (
       <div className="space-y-3 rounded-2xl border border-gray-100 bg-gray-50 p-4">
         <div className="flex items-start gap-2 text-sm">
@@ -182,9 +142,9 @@ export default function RouteMap({ outbound, returnLeg }: Props) {
 
   return (
     <div>
-      <div className="relative h-56 w-full overflow-hidden rounded-2xl border border-gray-100 sm:h-64">
+      <div className="relative z-0 h-56 w-full overflow-hidden rounded-2xl border border-gray-100 sm:h-64">
         <div ref={mapEl} className="h-full w-full" />
-        {!isLoaded && (
+        {!L && (
           <div className="absolute inset-0 flex items-center justify-center bg-gray-50">
             <Loader2 className="h-5 w-5 animate-spin text-brand-500" />
           </div>
