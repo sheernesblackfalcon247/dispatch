@@ -54,8 +54,14 @@ const PAYMENT_CHOICES: { key: PaymentChoice; label: string; Icon: typeof CreditC
   { key: "cash", label: "Paid by cash", Icon: Banknote },
 ];
 
-function JobStatusBadge({ status }: { status: JobStatus | null | undefined }) {
-  const m = JOB_STATUS_META[status ?? "processing"] ?? JOB_STATUS_META.processing;
+/**
+ * The job status, shown only when it says something the ride status doesn't:
+ * "Processing" is the everyday default, and Completed / Cancelled are already
+ * carried by the ride status they set.
+ */
+function JobStatusBadge({ status, rideStatus }: { status: JobStatus | null | undefined; rideStatus: BookingStatus }) {
+  if (!status || status === "processing" || status === rideStatus) return null;
+  const m = JOB_STATUS_META[status] ?? JOB_STATUS_META.processing;
   return (
     <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold", m.bg, m.color)}>
       <span className={cn("h-1.5 w-1.5 rounded-full", m.dot)} />
@@ -213,7 +219,7 @@ export default function BookingsPage() {
                       )}
                     </span>
                     <span className="flex shrink-0 items-center gap-1">
-                      <JobStatusBadge status={r.job_status} />
+                      <JobStatusBadge status={r.job_status} rideStatus={r.status} />
                       <StatusBadge status={r.status} size="xs" />
                     </span>
                   </div>
@@ -301,7 +307,7 @@ export default function BookingsPage() {
                       <td className="px-3 py-3">
                         <div className="flex flex-col items-start gap-1">
                           <StatusBadge status={r.status} size="xs" />
-                          <JobStatusBadge status={r.job_status} />
+                          <JobStatusBadge status={r.job_status} rideStatus={r.status} />
                         </div>
                       </td>
                       <td className="px-3 py-3 text-right font-display font-bold text-ink-950">{money(r.estimated_fare)}</td>
@@ -388,7 +394,9 @@ function BookingDetailModal({
   const [savingOffice, setSavingOffice] = useState(false);
   const [officeErr, setOfficeErr] = useState<string | null>(null);
 
-  const saveOffice = async (patch: Partial<Pick<Row, "job_status" | "payment_method" | "payment_status">>) => {
+  const saveOffice = async (
+    patch: Partial<Pick<Row, "job_status" | "status" | "payment_method" | "payment_status">>
+  ) => {
     setSavingOffice(true);
     setOfficeErr(null);
     const supabase = createClient();
@@ -403,9 +411,17 @@ function BookingDetailModal({
   };
 
   const changeJobStatus = async (next: JobStatus) => {
-    const previous = jobStatus;
+    const previous = { job: jobStatus, ride: status };
+    // Completed / Cancelled close the ride itself too, so the bookings list,
+    // its filters and the dispatch board all agree. The other job statuses are
+    // office notes and leave the ride where it is.
+    const ride: BookingStatus | null = next === "completed" || next === "cancelled" ? next : null;
     setJobStatus(next);
-    if (!(await saveOffice({ job_status: next }))) setJobStatus(previous);
+    if (ride) setStatus(ride);
+    if (!(await saveOffice(ride ? { job_status: next, status: ride } : { job_status: next }))) {
+      setJobStatus(previous.job);
+      setStatus(previous.ride);
+    }
   };
 
   const changePayment = async (next: PaymentChoice) => {
@@ -435,8 +451,8 @@ function BookingDetailModal({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-mono text-sm font-semibold text-gray-500">{row.booking_number}</span>
-              <StatusBadge status={row.status} size="xs" />
-              <JobStatusBadge status={jobStatus} />
+              <StatusBadge status={status} size="xs" />
+              <JobStatusBadge status={jobStatus} rideStatus={status} />
             </div>
             <p className="mt-0.5 text-xs text-gray-400">
               {row.source?.name ?? "—"} · {clock(row.created_at)}
@@ -549,7 +565,9 @@ function BookingDetailModal({
                 <button
                   key={v}
                   onClick={() => changeJobStatus(v)}
-                  disabled={savingOffice || jobStatus === v}
+                  // A selected Completed / Cancelled can be pressed again when the ride
+                  // never followed (bookings marked before the two were linked).
+                  disabled={savingOffice || (jobStatus === v && !((v === "completed" || v === "cancelled") && status !== v))}
                   className={cn(
                     "rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors",
                     jobStatus === v
